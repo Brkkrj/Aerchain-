@@ -1,0 +1,41 @@
+:root {
+  --charcoal: #231F20;
+  --coral: #EF5433;
+  --white: #FFFFFF;
+  --bg: #F7F7F5;
+  --text-secondary: #666666;
+  --border: #E6E6E6;
+  --success: #0B7A52;
+  --success-bg: #ECF7F1;
+  --success-border: #BFE3D0;
+  --warning: #B45309;
+  --warning-bg: #FEF3C7;
+  --warning-border: #FDE68A;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html, body {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--charcoal);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+textarea, input, select {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

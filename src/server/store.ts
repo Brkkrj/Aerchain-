@@ -31,7 +31,7 @@ interface DB {
   vendorChats: Map<string, string>; // vendorId -> telegram chat id, once linked
   chatContext: Map<string, ChatContext>; // telegram chat id -> active requirement+vendor
   botUsername: string | null;
-  linkedChatId: string | null; // the one real chat, once anyone has /start'd the bot
+  linkedChatIdByPhone: Map<string, string>; // dummy phone number -> chat id, once someone with that number has /start'd the bot
   dispatchLog: DispatchLogEntry[];
 }
 
@@ -48,7 +48,7 @@ function seed(): DB {
     vendorChats: new Map(),
     chatContext: new Map(),
     botUsername: null,
-    linkedChatId: null,
+    linkedChatIdByPhone: new Map(),
     dispatchLog: [],
   };
 }
@@ -205,9 +205,9 @@ export async function confirmRequirement(id: string, action: "send" | "draft") {
     logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
     audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
 
-    // Telegram — real send if this vendor's chat (or the shared linked chat) is already known.
+    // Telegram — real send if this vendor's chat (or the chat linked for its dummy number) is known.
     if (tg.isConfigured()) {
-      const chatId = db.vendorChats.get(vendorId) ?? db.linkedChatId;
+      const chatId = db.vendorChats.get(vendorId) ?? db.linkedChatIdByPhone.get(vendor.telegramPhone);
       if (chatId) {
         db.vendorChats.set(vendorId, chatId);
         db.chatContext.set(chatId, { requirementId: id, vendorId });
@@ -392,7 +392,7 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
     }
     db.vendorChats.set(vendorId, chatId);
     db.chatContext.set(chatId, { requirementId, vendorId });
-    db.linkedChatId = chatId; // this real chat now stands in for every dummy vendor
+    db.linkedChatIdByPhone.set(vendor.telegramPhone, chatId); // this chat now stands in for every vendor on the same dummy number
     audit(requirementId, "system", "vendor_telegram_linked", `${vendor.name} linked chat ${chatId}`);
     await tg.sendMessage(chatId, `Hi, this is Aera on behalf of ${db.buyer.name}.\n\n${rfxMessageText(req)}`);
     return;

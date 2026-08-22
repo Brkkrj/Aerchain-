@@ -135,6 +135,8 @@ export function patchRequirement(id: string, patch: Partial<Requirement> & { sum
   return updated;
 }
 
+const METRO_CITIES = ["Bangalore", "Mumbai", "Delhi", "Chennai", "Kolkata", "Ahmedabad", "Pune", "Hyderabad"];
+
 function shortlistVendors(req: Requirement): { shortlisted: string[]; funnel: string[] } {
   const funnel: string[] = [];
   let pool = VENDORS.slice();
@@ -143,7 +145,8 @@ function shortlistVendors(req: Requirement): { shortlisted: string[]; funnel: st
     pool = pool.filter((v) => v.suppliesCategories.includes(req.itemCategory as string));
     funnel.push(`${pool.length} stock ${req.itemCategory}`);
   }
-  const city = (req.siteAddress ?? "").toLowerCase().includes("bangalore") ? "Bangalore" : null;
+  const addressLower = (req.siteAddress ?? "").toLowerCase();
+  const city = METRO_CITIES.find((c) => addressLower.includes(c.toLowerCase())) ?? null;
   if (city) {
     pool = pool.filter((v) => v.serviceLocations.includes(city));
     funnel.push(`${pool.length} deliver to ${city}`);

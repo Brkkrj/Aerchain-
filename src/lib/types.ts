@@ -109,6 +109,9 @@ export interface Buyer {
   name: string;
   billingAddress: string;
   siteAddress: string;
+  gstNumber: string | null;
+  panNumber: string | null;
+  dealsCompleted: number;
 }
 
 export const MANDATORY_FIELDS = [

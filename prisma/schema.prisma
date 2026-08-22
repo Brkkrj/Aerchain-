@@ -10,10 +10,12 @@ generator client {
 }
 
 model Buyer {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   name           String
   billingAddress String
   siteAddress    String
+  gstNumber      String? @map("gst_number")
+  panNumber      String? @map("pan_number")
 }
 
 model Vendor {

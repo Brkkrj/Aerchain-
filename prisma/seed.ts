@@ -17,6 +17,8 @@ async function main() {
         name: "Ramesh Murthy",
         billingAddress: "No. 142, 3rd Floor, Sampige Road, Malleswaram, Bangalore 560003",
         siteAddress: "Plot 7, Yeshwantpur Industrial Suburb, Bangalore 560022",
+        gstNumber: "29ABCPM1234F1Z5",
+        panNumber: "ABCPM1234F",
       },
     });
   }

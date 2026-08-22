@@ -51,6 +51,21 @@ export default function ProfilePage() {
               <div style={{ font: "600 20px/1.25 var(--font-inter), sans-serif" }}>{profile.name}</div>
               <div style={{ font: "400 13px/1.3 var(--font-inter), sans-serif", color: "var(--text-secondary)" }}>Buyer</div>
             </div>
+            <div
+              style={{
+                marginLeft: "auto",
+                background: "var(--success-bg)",
+                border: "1px solid var(--success-border)",
+                borderRadius: 9,
+                padding: "8px 14px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ font: "700 18px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>{profile.dealsCompleted}</div>
+              <div style={{ font: "600 11px/1 var(--font-inter), sans-serif", color: "var(--success)", letterSpacing: "0.04em", marginTop: 3 }}>
+                DEALS DONE
+              </div>
+            </div>
           </div>
 
           <div style={{ padding: 24 }}>
@@ -79,6 +94,15 @@ export default function ProfilePage() {
                 <SecondaryButton onClick={startEdit}>Edit</SecondaryButton>
               </>
             )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 24, paddingTop: 20, borderTop: "1px solid #EFEFED" }}>
+              <Field label="GST Number">
+                <p style={{ margin: 0, fontSize: 14 }}>{profile.gstNumber ?? "—"}</p>
+              </Field>
+              <Field label="PAN Number">
+                <p style={{ margin: 0, fontSize: 14 }}>{profile.panNumber ?? "—"}</p>
+              </Field>
+            </div>
           </div>
         </Card>
       </Container>

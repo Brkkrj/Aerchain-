@@ -312,9 +312,7 @@ function rfxMessageText(req: Requirement, buyerName: string, telegramLink?: stri
     (req.qty && req.uom ? `Quantity: ${req.qty} ${req.uom}\n` : "") +
     `Deliver to: ${req.siteAddress}\n` +
     `Needed by: ${req.deliveryDate}\n\n` +
-    `Please reply with your rate, payment terms, transport (included/excluded), and delivery date. ` +
-    `Any format is fine — plain text, a pasted rate card, a PDF/Excel/Word file, or a photo. You can ` +
-    `reply directly to this email, too.` +
+    `Please reply with your rate, payment terms, transport (included/excluded), and delivery date.` +
     (telegramLink
       ? `\n\nFastest way to reply: open this link and send your quote on Telegram — ${telegramLink}`
       : "")
@@ -532,14 +530,28 @@ export async function getAuditLog(id: string): Promise<AuditEntry[]> {
 export async function getProfile(): Promise<Buyer> {
   const buyer = await prisma.buyer.findFirst();
   if (!buyer) throw new Error("no_buyer_seeded");
-  return { name: buyer.name, billingAddress: buyer.billingAddress, siteAddress: buyer.siteAddress };
+  const dealsCompleted = await prisma.requirement.count({ where: { status: "closed_deal" } });
+  return {
+    name: buyer.name,
+    billingAddress: buyer.billingAddress,
+    siteAddress: buyer.siteAddress,
+    gstNumber: buyer.gstNumber,
+    panNumber: buyer.panNumber,
+    dealsCompleted,
+  };
 }
 
-export async function updateProfile(patch: Partial<Buyer>): Promise<Buyer> {
+// Only billing/site address are ever user-editable (matches the profile page's edit form) — GST,
+// PAN, and the deals-completed count are read-only business records, so this whitelists what can
+// actually change rather than trusting whatever the caller sends.
+export async function updateProfile(patch: Partial<Pick<Buyer, "billingAddress" | "siteAddress">>): Promise<Buyer> {
   const buyer = await prisma.buyer.findFirst();
   if (!buyer) throw new Error("no_buyer_seeded");
-  const updated = await prisma.buyer.update({ where: { id: buyer.id }, data: patch });
-  return { name: updated.name, billingAddress: updated.billingAddress, siteAddress: updated.siteAddress };
+  const data: Partial<Pick<Buyer, "billingAddress" | "siteAddress">> = {};
+  if (patch.billingAddress !== undefined) data.billingAddress = patch.billingAddress;
+  if (patch.siteAddress !== undefined) data.siteAddress = patch.siteAddress;
+  await prisma.buyer.update({ where: { id: buyer.id }, data });
+  return getProfile();
 }
 
 export async function getVendors(): Promise<Vendor[]> {

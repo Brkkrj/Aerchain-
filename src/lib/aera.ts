@@ -97,6 +97,7 @@ function findPaymentTerms(text: string): string | null {
   // comma just starts the next unrelated clause in the sentence.
   const m =
     text.match(/(\d{1,3}%\s*(?:advance|adv)(?:\s*[+,]\s*(?:(?:balance|remaining|bal)|\d{1,3}%)[^.,]{0,40})?)/i) ||
+    text.match(/(\d{1,3}%\s*on\s*delivery)/i) ||
     text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
     text.match(/(cash on delivery|cod)/i) ||
     text.match(/(net\s*\d{1,3})/i) ||

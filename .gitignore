@@ -48,9 +48,6 @@ next-env.d.ts
 .claude/
 skills-lock.json
 
-# tesseract.js OCR language data, auto-downloaded at runtime, not app source
-*.traineddata
-
 .env*
 
 .env*

@@ -5,7 +5,7 @@
 // is genuine: actual DB writes, actual extraction parsing, an actual audit trail.
 import { Resend } from "resend";
 import { prisma } from "@/lib/db";
-import { extractOffer, detectFormat, rankOffers, recognizeImageText, extractTextFromDocument } from "@/lib/extraction";
+import { extractOffer, detectFormat, rankOffers, extractTextFromDocument } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
 import * as tg from "@/lib/telegram";
 import * as gmail from "@/lib/gmail";
@@ -648,20 +648,28 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
 
   let rawText = (prefixMatch ? text.slice(prefixMatch[0].length) : text) || msg.caption || "";
   const photo = msg.photo?.[msg.photo.length - 1];
+  // Photos/scanned images aren't readable (no OCR/vision available) — say so plainly and don't
+  // record a bogus all-fields-missing offer; text, PDF, Excel, and Word all work fine.
   if (!rawText && photo) {
-    try {
-      const buffer = await tg.downloadFile(photo.file_id);
-      const ocrText = await recognizeImageText(buffer);
-      rawText = ocrText ? `[OCR of photographed rate card]\n${ocrText}` : "[Photo received, OCR found no readable text]";
-    } catch (err) {
-      console.error("photo OCR pipeline failed", err);
-      rawText = "[Photo received, could not be read]";
-    }
-  } else if (!rawText && msg.document) {
+    await tg.sendMessage(
+      chatId,
+      "Sorry, I can't read photos right now — could you type the quote as a message, or send it as a PDF, Excel, or Word file instead?"
+    );
+    return;
+  }
+  if (!rawText && msg.document) {
     const fileLabel = msg.document.file_name ?? "attached file";
+    const mimeType = msg.document.mime_type ?? "";
+    if (mimeType.startsWith("image/")) {
+      await tg.sendMessage(
+        chatId,
+        "Sorry, I can't read photos right now — could you type the quote as a message, or send it as a PDF, Excel, or Word file instead?"
+      );
+      return;
+    }
     try {
       const buffer = await tg.downloadFile(msg.document.file_id);
-      const docText = await extractTextFromDocument(buffer, msg.document.mime_type ?? "", msg.document.file_name);
+      const docText = await extractTextFromDocument(buffer, mimeType, msg.document.file_name);
       rawText = docText
         ? `[Extracted from ${fileLabel}]\n${docText}`
         : `[Received ${fileLabel}, no readable text found — likely a scanned/image-only file]`;
@@ -683,6 +691,21 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
   await audit(link.requirementId, "system", "telegram_reply_received", `${vendor?.name ?? link.vendorId}: "${rawText.slice(0, 120)}"`);
 }
 
+// Gmail's plain-text export of a reply includes the quoted original message ("On <date> ...
+// wrote:" + "> "-prefixed lines) and a "[image: filename]" placeholder for any inline image —
+// none of that is the vendor's actual content, and leaving it in place made the (non-empty)
+// placeholder text look like a real reply, so an actual attached image never got OCR'd at all.
+function cleanEmailBody(text: string): string {
+  const quoteMarker = text.search(/\r?\n(On .{0,120} wrote:|-{2,} ?Original Message ?-{2,})\r?\n/i);
+  const withoutQuote = quoteMarker !== -1 ? text.slice(0, quoteMarker) : text;
+  return withoutQuote
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith(">"))
+    .join("\n")
+    .replace(/\[image:\s*[^\]]+\]/gi, "")
+    .trim();
+}
+
 // Polled from the client (piggybacking on the existing notification-poll interval) rather than
 // pushed via webhook — there's no domain here for Gmail/Resend to push inbound mail to, so we
 // pull instead. Only scans the buyer's own unread mail for the "+vendorId_requirementId" alias
@@ -692,23 +715,29 @@ export async function checkInboundEmail(): Promise<{ processed: number }> {
   const emails = await gmail.listInboundReplies();
   let processed = 0;
   for (const email of emails) {
-    let rawText = email.text;
-    const attachment = email.attachments[0]; // first attachment only, same simplification as Telegram
-    if (!rawText.trim() && attachment) {
+    let rawText = cleanEmailBody(email.text);
+    // Every attachment gets processed, not just when there's no other text — a vendor might send
+    // a short note AND a rate-card photo, or several files at once.
+    for (const attachment of email.attachments) {
+      // Photos/scanned images aren't readable (no OCR/vision available) — text, PDF, Excel, and
+      // Word all work fine, so only skip the image case rather than every attachment.
+      if (attachment.mimeType.startsWith("image/")) {
+        rawText += `\n[Image attachment "${attachment.filename}" received — photos aren't supported yet; please resend the quote as text or a PDF/Excel/Word file]`;
+        continue;
+      }
       try {
         const buffer = await gmail.downloadAttachment(email.gmailId, attachment.attachmentId);
-        const docText = attachment.mimeType.startsWith("image/")
-          ? await recognizeImageText(buffer)
-          : await extractTextFromDocument(buffer, attachment.mimeType, attachment.filename);
-        rawText = docText
-          ? `[Extracted from ${attachment.filename}]\n${docText}`
-          : `[Received ${attachment.filename}, no readable text found]`;
+        const docText = await extractTextFromDocument(buffer, attachment.mimeType, attachment.filename);
+        rawText += docText
+          ? `\n[Extracted from ${attachment.filename}]\n${docText}`
+          : `\n[Received ${attachment.filename}, no readable text found]`;
       } catch (err) {
         console.error("email attachment extraction failed", err);
-        rawText = `[Received ${attachment.filename}, could not be read]`;
+        rawText += `\n[Received ${attachment.filename}, could not be read]`;
       }
     }
-    if (rawText.trim()) {
+    rawText = rawText.trim();
+    if (rawText) {
       try {
         await submitVendorReply(email.requirementId, email.vendorId, rawText, "email");
         await audit(email.requirementId, "system", "email_reply_received", `${email.from}: "${rawText.slice(0, 120)}"`);

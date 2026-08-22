@@ -39,6 +39,7 @@ function findPaymentTerms(text: string): string | null {
   const m =
     text.match(/(\d{1,3}%\s*(?:advance|adv)(?:\s*[+,]\s*(?:(?:balance|remaining|bal)|\d{1,3}%)[^\n,.]{0,40})?)/i) ||
     text.match(/(100%\s*after\s*\d+\s*days?)/i) ||
+    text.match(/(\d{1,3}%\s*on\s*delivery)/i) ||
     text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
     text.match(/(cash on delivery|cod)/i) ||
     text.match(/(net\s*\d{1,3})/i);
@@ -126,7 +127,7 @@ export function extractOffer(rawText: string): ExtractionResult {
 }
 
 export function detectFormat(rawText: string): SourceFormat {
-  if (/\[ocr of photographed|handwritten|photo/i.test(rawText)) return "image";
+  if (/handwritten|photo/i.test(rawText)) return "image";
   if (/\[extracted from .*\.(xlsx|xls|csv)\]/i.test(rawText) || /\|/.test(rawText)) return "excel";
   if (/\[extracted from .*\.docx?\]/i.test(rawText)) return "word";
   if (/\[extracted from .*\.pdf\]/i.test(rawText) || /quotation|authoris|authoriz/i.test(rawText)) return "pdf";
@@ -158,32 +159,10 @@ export async function extractTextFromDocument(buffer: Buffer, mimeType: string, 
       const text = wb.SheetNames.map((sheetName) => XLSX.utils.sheet_to_csv(wb.Sheets[sheetName])).join("\n\n");
       return text.trim() || null;
     }
-    if (mimeType.startsWith("image/")) {
-      return recognizeImageText(buffer);
-    }
   } catch (err) {
     console.error("document extraction failed", err);
   }
   return null;
-}
-
-// Offline OCR for photographed rate cards — the closest thing to real "read a photo" capability
-// achievable without an LLM/vision API key. Lazily imported so a build/dev run that never
-// receives a Telegram photo never pays tesseract's startup cost.
-export async function recognizeImageText(imageBuffer: Buffer): Promise<string | null> {
-  try {
-    const { createWorker } = await import("tesseract.js");
-    const worker = await createWorker("eng");
-    try {
-      const { data } = await worker.recognize(imageBuffer);
-      return data.text?.trim() || null;
-    } finally {
-      await worker.terminate();
-    }
-  } catch (err) {
-    console.error("OCR failed", err);
-    return null;
-  }
 }
 
 // Real ranking, not hardcoded: weighted score across rate (lower is better), transport

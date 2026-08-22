@@ -1,5 +1,6 @@
-// Seeds the exact demo fixtures the app has always used (src/lib/data.ts) — kept as labeled
-// demo/seed data per project decision, now backed by a real table instead of a module constant.
+// Seeds the demo fixtures the app has always used — kept as labeled demo/seed data per project
+// decision. Safe to re-run: only ever adds missing rows, never overwrites real edits (e.g. a
+// buyer profile edited through the app, or requirements/offers created by real use).
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -9,14 +10,16 @@ const DUMMY_PHONE = "9654600676";
 const ALT_PHONE = "8006604235";
 
 async function main() {
-  await prisma.buyer.deleteMany();
-  await prisma.buyer.create({
-    data: {
-      name: "Ramesh Murthy",
-      billingAddress: "No. 142, 3rd Floor, Sampige Road, Malleswaram, Bangalore 560003",
-      siteAddress: "Plot 7, Yeshwantpur Industrial Suburb, Bangalore 560022",
-    },
-  });
+  const existingBuyer = await prisma.buyer.findFirst();
+  if (!existingBuyer) {
+    await prisma.buyer.create({
+      data: {
+        name: "Ramesh Murthy",
+        billingAddress: "No. 142, 3rd Floor, Sampige Road, Malleswaram, Bangalore 560003",
+        siteAddress: "Plot 7, Yeshwantpur Industrial Suburb, Bangalore 560022",
+      },
+    });
+  }
 
   const vendors = [
     { id: "V1", name: "Barkha", suppliesCategories: ["Aggregate", "Cement", "Sand"], serviceLocations: ["Mumbai"], capacityUomPerMonth: 100, dealsLast30Days: 45, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
@@ -26,6 +29,9 @@ async function main() {
     { id: "V5", name: "Shah Steels", suppliesCategories: ["TMT Bars"], serviceLocations: ["Kolkata"], capacityUomPerMonth: 200, dealsLast30Days: 30, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V6", name: "Sree Cements", suppliesCategories: ["Cement"], serviceLocations: ["Ahmedabad"], capacityUomPerMonth: 300, dealsLast30Days: 18, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V7", name: "Not a real match Co.", suppliesCategories: ["Bricks"], serviceLocations: ["Pune"], capacityUomPerMonth: 50, dealsLast30Days: 5, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+    { id: "V8", name: "Reliable RMC Suppliers", suppliesCategories: ["RMC", "Cement"], serviceLocations: ["Hyderabad"], capacityUomPerMonth: 250, dealsLast30Days: 22, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+    { id: "V9", name: "Metro Tiles & Sanitaryware", suppliesCategories: ["Tiles"], serviceLocations: ["Mumbai"], capacityUomPerMonth: 400, dealsLast30Days: 12, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+    { id: "V10", name: "Shree Plywood House", suppliesCategories: ["Plywood", "Steel"], serviceLocations: ["Pune"], capacityUomPerMonth: 150, dealsLast30Days: 28, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
   ];
   for (const v of vendors) {
     await prisma.vendor.upsert({ where: { id: v.id }, update: v, create: v });

@@ -34,13 +34,8 @@ function NotificationIcon({ type }: { type: NotificationType }) {
 }
 
 function Logo() {
-  return (
-    <span style={{ fontFamily: "var(--font-inter)", fontWeight: 700, fontSize: 18, letterSpacing: "-0.02em" }}>
-      <span style={{ color: "var(--charcoal)" }}>AERCH</span>
-      <span style={{ color: "var(--coral)" }}>AI</span>
-      <span style={{ color: "var(--charcoal)" }}>N</span>
-    </span>
-  );
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/aerchain-logo.avif" alt="Aerchain" style={{ height: 22, width: "auto", display: "block" }} />;
 }
 
 export default function Header() {

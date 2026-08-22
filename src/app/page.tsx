@@ -9,7 +9,7 @@ import { statusLabel } from "@/lib/theme";
 import { Requirement, Vendor } from "@/lib/types";
 
 const STATUSES = ["all", "draft", "sent_to_vendor", "rate_received", "closed_deal", "cancelled"];
-const CATEGORIES = ["all", "Aggregate", "Cement", "TMT Bars", "Sand"];
+const CATEGORIES = ["all", "Aggregate", "Cement", "TMT Bars", "Sand", "Bricks", "Steel", "Tiles", "Plywood", "Paint", "RMC"];
 const DATE_RANGES: { value: "all" | "7" | "30" | "90"; label: string }[] = [
   { value: "all", label: "Any Date" },
   { value: "7", label: "Last 7 Days" },

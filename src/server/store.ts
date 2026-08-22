@@ -490,9 +490,9 @@ export async function acceptOffer(id: string, offerId: string) {
     data: { status: "closed_deal", winningOfferId: offerId, dealAmount },
     include: REQUIREMENT_INCLUDE,
   });
-  const vendor = await prisma.vendor.findUnique({ where: { id: offer.vendorId } });
+  const vendor = await prisma.vendor.update({ where: { id: offer.vendorId }, data: { dealsLast30Days: { increment: 1 } } });
   await audit(id, "buyer", "winner_selected", offer.vendorId);
-  await audit(id, "system", "confirmation_sent", `To ${vendor?.name ?? offer.vendorId}`);
+  await audit(id, "system", "confirmation_sent", `To ${vendor.name}`);
   await audit(id, "system", "requirement_closed", `Deal amount ${dealAmount}`);
   return mapRequirement(updatedRow);
 }

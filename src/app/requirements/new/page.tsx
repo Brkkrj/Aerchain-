@@ -10,12 +10,18 @@ interface ChatMsg {
   text: string;
 }
 
-const SUGGESTIONS = ["I need 10mm Aggregate, Ambuja grade, 500 UOM, delivered to Yeshwantpur, Bangalore."];
+// Covers all 5 mandatory fields (category, item, grade, delivery date, site address) plus a
+// couple of optional ones (qty/uom, payment terms, transport) in one message, so sending it as-is
+// demonstrates the single-shot path straight to the confirm screen; editing it demonstrates the
+// multi-turn one.
+const SAMPLE_MESSAGE =
+  "I need 10mm Aggregate, Ambuja grade, 500 UOM, delivered to Plot 7, Yeshwantpur Industrial Suburb, " +
+  "Bangalore 560022, by 30th August 2026. Payment terms: 50% advance, transport should be included.";
 
 export default function NewRequirementPage() {
   const router = useRouter();
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(SAMPLE_MESSAGE);
   const [thinking, setThinking] = useState(false);
   const [requirementId, setRequirementId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -116,28 +122,6 @@ export default function NewRequirementPage() {
               </div>
             )}
           </div>
-
-          {!ready && msgs.length === 0 && (
-            <div style={{ padding: "0 24px 16px", display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => send(s)}
-                  style={{
-                    background: "var(--white)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 9,
-                    padding: "9px 12px",
-                    font: "400 13px/1.3 var(--font-inter), sans-serif",
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
 
           <div style={{ padding: 20, borderTop: "1px solid var(--border)", display: "flex", gap: 10 }}>
             <input

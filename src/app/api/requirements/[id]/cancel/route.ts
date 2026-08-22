@@ -5,7 +5,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   try {
-    const requirement = cancelRequirement(id, body.reason ?? "No reason given");
+    const requirement = await cancelRequirement(id, body.reason ?? "No reason given");
     return NextResponse.json({ requirement });
   } catch {
     return NextResponse.json({ error: "not_found" }, { status: 404 });

@@ -6,7 +6,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json();
   if (!body.message) return NextResponse.json({ error: "message is required" }, { status: 400 });
   try {
-    const result = postMessage(id, body.message);
+    const result = await postMessage(id, body.message);
     return NextResponse.json(result);
   } catch {
     return NextResponse.json({ error: "not_found" }, { status: 404 });

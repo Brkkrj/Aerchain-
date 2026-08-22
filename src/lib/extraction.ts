@@ -1,7 +1,8 @@
-// Extraction agent — real parsing of a vendor reply's raw text into normalized offer fields,
-// regardless of the shape it arrived in (PDF export, Excel export, plain email, or rough OCR-style
-// text off a photographed rate card). No external LLM call: this is genuine regex/heuristic
-// parsing against unstructured text, which is exactly what's asked for — see TECH_DESIGN.md §5.4.
+// Extraction agent — rule-based parsing of a vendor reply's raw text into normalized offer
+// fields, regardless of the shape it arrived in (PDF export, Excel export, plain email, or OCR
+// text off a photographed rate card). No external LLM call available for this project — see
+// TECH_DESIGN.md §5.4 for the contract this mirrors; a real Claude vision call is a drop-in
+// replacement later (same function signatures/shape).
 import { Offer, SourceFormat } from "./types";
 
 export interface ExtractionResult {
@@ -20,12 +21,20 @@ export interface ExtractionResult {
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 function findRate(text: string): number | null {
-  const m = text.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)/i);
-  return m ? Number(m[1].replace(/,/g, "")) : null;
+  const withCurrency = text.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)/i);
+  if (withCurrency) return Number(withCurrency[1].replace(/,/g, ""));
+  const withLabel = text.match(/rate[:\-]?\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)?\s*(?:uom|unit)?/i);
+  if (withLabel) return Number(withLabel[1].replace(/,/g, ""));
+  return null;
 }
 
 function findPaymentTerms(text: string): string | null {
-  const m = text.match(/(\d{1,3}%\s*(?:advance|adv)[^\n.]{0,60})/i) || text.match(/(100%\s*after\s*\d+\s*days?)/i);
+  const m =
+    text.match(/(\d{1,3}%\s*(?:advance|adv)[^\n.]{0,60})/i) ||
+    text.match(/(100%\s*after\s*\d+\s*days?)/i) ||
+    text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
+    text.match(/(cash on delivery|cod)/i) ||
+    text.match(/(net\s*\d{1,3})/i);
   return m ? m[1].trim() : null;
 }
 
@@ -33,33 +42,56 @@ function findTransport(text: string): boolean | null {
   const lower = text.toLowerCase();
   if (/\b(incl(uded)?|include)\b/.test(lower) && /transport|xport/.test(lower)) return true;
   if (/\b(excl(uded)?|exclude)\b/.test(lower) && /transport|xport/.test(lower)) return false;
-  if (/transport ourselves|no extra charge/.test(lower)) return true;
+  if (/transport ourselves|no extra charge|free delivery|delivery (is )?free/.test(lower)) return true;
+  if (/transport chargeable|extra for transport|buyer (will )?arrange(s)? transport/.test(lower)) return false;
   return null;
 }
 
 function findDeliveryDate(text: string): string | null {
   const pattern = new RegExp(`(\\d{1,2})\\s*(${MONTHS.join("|")})[a-z]*\\.?\\s*(\\d{4})?`, "i");
-  const m = text.match(pattern);
-  if (!m) return null;
-  const day = m[1].padStart(2, "0");
-  const monthIdx = MONTHS.findIndex((mo) => m[2].toLowerCase().startsWith(mo));
-  const month = String(monthIdx + 1).padStart(2, "0");
-  const year = m[3] || "2026";
-  return `${year}-${month}-${day}`;
+  const named = text.match(pattern);
+  if (named) {
+    const day = named[1].padStart(2, "0");
+    const monthIdx = MONTHS.findIndex((mo) => named[2].toLowerCase().startsWith(mo));
+    const month = String(monthIdx + 1).padStart(2, "0");
+    const year = named[3] || "2026";
+    return `${year}-${month}-${day}`;
+  }
+  const numeric = text.match(/\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})\b/);
+  if (numeric) {
+    const day = numeric[1].padStart(2, "0");
+    const month = numeric[2].padStart(2, "0");
+    return `${numeric[3]}-${month}-${day}`;
+  }
+  return null;
 }
 
 function findCapacity(text: string): { capacityUom: number | null; capacityLeadDays: number | null } {
-  const m = text.match(/(\d{2,5})\s*uom[^\d]{0,10}(\d{1,3})\s*(?:days?|dy)/i);
-  if (m) return { capacityUom: Number(m[1]), capacityLeadDays: Number(m[2]) };
+  // The unit ("uom"/"mt"/"units") must be present right after the quantity — otherwise this
+  // false-matches unrelated number pairs elsewhere in the message (e.g. "100% after 5 days" in
+  // a payment-terms clause).
+  const m = text.match(/(\d{2,5})\s*(?:uom|mt|units?)[^\d]{0,20}(\d{1,3})\s*(?:days?|dy|weeks?|wk)/i);
+  if (m) {
+    const isWeeks = /week|wk/i.test(m[0]);
+    return { capacityUom: Number(m[1]), capacityLeadDays: isWeeks ? Number(m[2]) * 7 : Number(m[2]) };
+  }
   return { capacityUom: null, capacityLeadDays: null };
 }
 
+const BRAND_WORDS = [
+  "ambuja", "ultratech", "tata", "jsw", "shree", "acc", "birla", "dalmia", "ramco",
+  "wonder", "century", "kesoram", "bangur", "sagar", "chettinad", "zuari", "coromandel",
+  "tiscon", "sail", "kamdhenu",
+];
+
 function findBrand(text: string): string | null {
-  const m = text.match(/amb[a-z.]*ja|ultratech|tata|jsw|shree|acc|birla|dalmia/i);
-  if (!m) return null;
-  const raw = m[0].toLowerCase();
-  if (raw.startsWith("amb")) return "Ambuja";
-  return raw.charAt(0).toUpperCase() + raw.slice(1);
+  const lower = text.toLowerCase();
+  // tolerate OCR/typo noise like "amb..ja" or "amb*ja" before the exact-match pass
+  if (/amb[a-z.*_ ]{0,4}ja/i.test(lower)) return "Ambuja";
+  for (const b of BRAND_WORDS) {
+    if (lower.includes(b)) return b.charAt(0).toUpperCase() + b.slice(1);
+  }
+  return null;
 }
 
 export function extractOffer(rawText: string): ExtractionResult {
@@ -85,8 +117,27 @@ export function extractOffer(rawText: string): ExtractionResult {
 export function detectFormat(rawText: string): SourceFormat {
   if (/quotation|authoris|authoriz/i.test(rawText)) return "pdf";
   if (/\|/.test(rawText)) return "excel";
-  if (/handwritten|photo/i.test(rawText)) return "image";
+  if (/handwritten|photo|\[ocr/i.test(rawText)) return "image";
   return "plain_text";
+}
+
+// Offline OCR for photographed rate cards — the closest thing to real "read a photo" capability
+// achievable without an LLM/vision API key. Lazily imported so a build/dev run that never
+// receives a Telegram photo never pays tesseract's startup cost.
+export async function recognizeImageText(imageBuffer: Buffer): Promise<string | null> {
+  try {
+    const { createWorker } = await import("tesseract.js");
+    const worker = await createWorker("eng");
+    try {
+      const { data } = await worker.recognize(imageBuffer);
+      return data.text?.trim() || null;
+    } finally {
+      await worker.terminate();
+    }
+  } catch (err) {
+    console.error("OCR failed", err);
+    return null;
+  }
 }
 
 // Real ranking, not hardcoded: weighted score across rate (lower is better), transport

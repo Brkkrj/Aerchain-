@@ -1,10 +1,11 @@
-// Server-side store — real request/response logic behind every API route. In-memory for this
-// prototype (no external DB, per the project's constraints), but every mutation is genuine:
-// this is not mocked data returned unconditionally, it's actual state transitions, actual
-// extraction parsing, and an actual audit trail.
-import { extractOffer, detectFormat, rankOffers } from "@/lib/extraction";
+// Server-side store — real request/response logic behind every API route, backed by Postgres via
+// Prisma (see prisma/schema.prisma). Previously this was an in-memory Map, which on Vercel loses
+// or fails to share state across serverless cold starts/instances — that was the root cause of
+// requirements, offers, and vendor-Telegram links disappearing in production. Every mutation here
+// is genuine: actual DB writes, actual extraction parsing, an actual audit trail.
+import { prisma } from "@/lib/db";
+import { extractOffer, detectFormat, rankOffers, recognizeImageText } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
-import { BUYER, OTHER_REQUIREMENTS, VENDORS, nextCode } from "@/lib/data";
 import * as tg from "@/lib/telegram";
 import {
   AuditEntry,
@@ -16,130 +17,243 @@ import {
   ReplyChannel,
   Requirement,
   RequirementStatus,
+  Vendor,
 } from "@/lib/types";
 
-interface ChatContext {
-  requirementId: string;
-  vendorId: string;
-}
+type OfferRow = NonNullable<Awaited<ReturnType<typeof prisma.offer.findFirst>>>;
+type MessageRow = NonNullable<Awaited<ReturnType<typeof prisma.message.findFirst>>>;
+type NotificationRow = NonNullable<Awaited<ReturnType<typeof prisma.notification.findFirst>>>;
+type AuditRow = NonNullable<Awaited<ReturnType<typeof prisma.auditEntry.findFirst>>>;
+type DispatchRow = NonNullable<Awaited<ReturnType<typeof prisma.dispatchLogEntry.findFirst>>>;
+type VendorRow = NonNullable<Awaited<ReturnType<typeof prisma.vendor.findFirst>>>;
+type RequirementRow = NonNullable<Awaited<ReturnType<typeof prisma.requirement.findFirst>>> & {
+  messages: MessageRow[];
+  offers: OfferRow[];
+};
 
-interface DB {
-  requirements: Map<string, Requirement>;
-  notifications: Notification[];
-  audit: AuditEntry[];
-  buyer: Buyer;
-  vendorChats: Map<string, string>; // vendorId -> telegram chat id, once linked
-  chatContext: Map<string, ChatContext>; // telegram chat id -> active requirement+vendor
-  botUsername: string | null;
-  linkedChatIdByPhone: Map<string, string>; // dummy phone number -> chat id, once someone with that number has /start'd the bot
-  dispatchLog: DispatchLogEntry[];
-}
+const REQUIREMENT_INCLUDE = {
+  messages: { orderBy: { createdAt: "asc" as const } },
+  offers: { orderBy: { receivedAt: "asc" as const } },
+};
 
-const globalForStore = globalThis as unknown as { __aeraStore?: DB };
-
-function seed(): DB {
-  const requirements = new Map<string, Requirement>();
-  for (const r of OTHER_REQUIREMENTS) requirements.set(r.id, r);
+function mapOffer(o: OfferRow): Offer {
   return {
-    requirements,
-    notifications: [],
-    audit: [],
-    buyer: { ...BUYER },
-    vendorChats: new Map(),
-    chatContext: new Map(),
-    botUsername: null,
-    linkedChatIdByPhone: new Map(),
-    dispatchLog: [],
+    id: o.id,
+    vendorId: o.vendorId,
+    requirementId: o.requirementId,
+    rawSource: o.rawSource,
+    replyChannel: o.replyChannel as ReplyChannel,
+    sourceFormat: o.sourceFormat as Offer["sourceFormat"],
+    rate: o.rate,
+    rateBasis: o.rateBasis,
+    brandOffered: o.brandOffered,
+    paymentTerms: o.paymentTerms,
+    transportIncluded: o.transportIncluded,
+    deliveryDate: o.deliveryDate,
+    capacityUom: o.capacityUom,
+    capacityLeadDays: o.capacityLeadDays,
+    extractionConfidence: o.extractionConfidence,
+    missingFields: o.missingFields,
+    needsReview: o.needsReview,
+    receivedAt: o.receivedAt.toISOString(),
   };
 }
 
-// Real email sending is not wired up yet (see TECH_DESIGN.md / conversation notes — needs the
-// buyer's personal Gmail connected as a tool). Once it is, replace this function's body with an
-// actual send call; every call site already has the right (to, subject-ish, body) shape.
+function mapMessage(m: MessageRow): Message {
+  return { id: m.id, sender: m.sender as Message["sender"], text: m.text, createdAt: m.createdAt.toISOString() };
+}
+
+function mapRequirement(r: RequirementRow): Requirement {
+  return {
+    id: r.id,
+    code: r.code,
+    itemCategory: r.itemCategory,
+    itemName: r.itemName,
+    itemGrade: r.itemGrade,
+    deliveryDate: r.deliveryDate,
+    siteAddress: r.siteAddress,
+    qty: r.qty,
+    uom: r.uom,
+    brandPreference: r.brandPreference,
+    paymentTerms: r.paymentTerms,
+    transportIncluded: r.transportIncluded,
+    siteCoordinator: r.siteCoordinator,
+    summaryText: r.summaryText,
+    summaryEdited: r.summaryEdited,
+    status: r.status as RequirementStatus,
+    dealAmount: r.dealAmount,
+    winningOfferId: r.winningOfferId,
+    createdAt: r.createdAt.toISOString(),
+    messages: r.messages.map(mapMessage),
+    offers: r.offers.map(mapOffer),
+    shortlistedVendorIds: r.shortlistedVendorIds,
+  };
+}
+
+function mapVendor(v: VendorRow): Vendor {
+  return {
+    id: v.id,
+    name: v.name,
+    suppliesCategories: v.suppliesCategories,
+    serviceLocations: v.serviceLocations,
+    capacityUomPerMonth: v.capacityUomPerMonth,
+    dealsLast30Days: v.dealsLast30Days,
+    replyChannel: v.replyChannel as ReplyChannel,
+    email: v.email,
+    telegramPhone: v.telegramPhone,
+  };
+}
+
+function mapNotification(n: NotificationRow): Notification {
+  return { id: n.id, requirementId: n.requirementId, text: n.text, meta: n.meta, read: n.read, createdAt: n.createdAt.toISOString() };
+}
+
+function mapAudit(a: AuditRow): AuditEntry {
+  return { id: a.id, requirementId: a.requirementId, actor: a.actor as AuditEntry["actor"], action: a.action, detail: a.detail, createdAt: a.createdAt.toISOString() };
+}
+
+function mapDispatch(d: DispatchRow): DispatchLogEntry {
+  return { id: d.id, requirementId: d.requirementId, vendorId: d.vendorId, channel: d.channel as ReplyChannel, to: d.to, message: d.message, delivered: d.delivered, sentAt: d.sentAt.toISOString() };
+}
+
+async function getRequirementRow(id: string): Promise<RequirementRow | null> {
+  return prisma.requirement.findUnique({ where: { id }, include: REQUIREMENT_INCLUDE });
+}
+
+async function audit(requirementId: string, actor: AuditEntry["actor"], action: string, detail: string) {
+  await prisma.auditEntry.create({ data: { requirementId, actor, action, detail } });
+}
+
+async function nextCode(): Promise<string> {
+  const counter = await prisma.counter.upsert({
+    where: { name: "requirement_seq" },
+    update: { value: { increment: 1 } },
+    create: { name: "requirement_seq", value: 3001 },
+  });
+  return `REQ-${counter.value}`;
+}
+
+// Real email sending is not wired up yet (needs the buyer's personal Gmail connected as a tool).
+// Once it is, replace this function's body with an actual send call; every call site already has
+// the right (to, subject-ish, body) shape.
 async function sendEmail(_to: string, _body: string): Promise<boolean> {
   return false; // false = composed and logged, but not actually delivered
 }
 
-const db: DB = globalForStore.__aeraStore ?? (globalForStore.__aeraStore = seed());
-
-function uid(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function audit(requirementId: string, actor: AuditEntry["actor"], action: string, detail: string) {
-  db.audit.push({ id: uid("audit"), requirementId, actor, action, detail, createdAt: new Date().toISOString() });
-}
-
-export function listRequirements(params: { q?: string; status?: string; category?: string; sortDesc?: boolean }) {
-  let list = Array.from(db.requirements.values());
-  const q = (params.q ?? "").trim().toLowerCase();
+export async function listRequirements(params: { q?: string; status?: string; category?: string; sortDesc?: boolean }) {
+  const q = (params.q ?? "").trim();
+  const where: Record<string, unknown> = {};
+  if (params.status && params.status !== "all") where.status = params.status;
+  if (params.category && params.category !== "all") where.itemCategory = params.category;
   if (q) {
-    list = list.filter(
-      (r) =>
-        r.code.toLowerCase().includes(q) ||
-        (r.itemName ?? "").toLowerCase().includes(q) ||
-        r.offers.some((o) => VENDORS.find((v) => v.id === o.vendorId)?.name.toLowerCase().includes(q))
-    );
+    where.OR = [
+      { code: { contains: q, mode: "insensitive" } },
+      { itemName: { contains: q, mode: "insensitive" } },
+      { offers: { some: { vendor: { name: { contains: q, mode: "insensitive" } } } } },
+    ];
   }
-  if (params.status && params.status !== "all") list = list.filter((r) => r.status === params.status);
-  if (params.category && params.category !== "all") list = list.filter((r) => r.itemCategory === params.category);
-  list = [...list].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  if (params.sortDesc !== false) list = list.reverse();
-  return list;
+  const rows = await prisma.requirement.findMany({
+    where,
+    include: REQUIREMENT_INCLUDE,
+    orderBy: { createdAt: params.sortDesc === false ? "asc" : "desc" },
+  });
+  return rows.map(mapRequirement);
 }
 
-export function getRequirement(id: string): Requirement | undefined {
-  return db.requirements.get(id);
+export async function getRequirement(id: string): Promise<Requirement | undefined> {
+  const row = await getRequirementRow(id);
+  return row ? mapRequirement(row) : undefined;
 }
 
-export function createRequirement(firstMessage: string): { requirement: Requirement; reply: string; isComplete: boolean } {
-  const id = uid("req");
-  const code = nextCode();
+export async function createRequirement(firstMessage: string): Promise<{ requirement: Requirement; reply: string; isComplete: boolean }> {
+  const code = await nextCode();
   const blank: Requirement = {
-    id, code, itemCategory: null, itemName: null, itemGrade: null, deliveryDate: null,
+    id: "", code, itemCategory: null, itemName: null, itemGrade: null, deliveryDate: null,
     siteAddress: null, qty: null, uom: null, brandPreference: null, paymentTerms: null,
     transportIncluded: null, siteCoordinator: null, summaryText: null, summaryEdited: false,
     status: "draft", dealAmount: null, winningOfferId: null, createdAt: new Date().toISOString(),
     messages: [], offers: [], shortlistedVendorIds: [],
   };
   const result = draftTurn(firstMessage, blank);
-  const buyerMsg: Message = { id: uid("msg"), sender: "buyer", text: firstMessage, createdAt: new Date().toISOString() };
-  const aeraMsg: Message = { id: uid("msg"), sender: "aera", text: result.reply, createdAt: new Date().toISOString() };
-  const requirement: Requirement = { ...blank, ...result.patch, messages: [buyerMsg, aeraMsg] };
-  if (result.isComplete) requirement.summaryText = buildSummary(requirement);
-  db.requirements.set(id, requirement);
-  audit(id, "buyer", "requirement_created", `From chat: "${firstMessage}"`);
-  return { requirement, reply: result.reply, isComplete: result.isComplete };
+  const merged: Requirement = { ...blank, ...result.patch };
+  const summaryText = result.isComplete ? buildSummary(merged) : null;
+
+  const created = await prisma.requirement.create({
+    data: {
+      code,
+      itemCategory: merged.itemCategory,
+      itemName: merged.itemName,
+      itemGrade: merged.itemGrade,
+      deliveryDate: merged.deliveryDate,
+      siteAddress: merged.siteAddress,
+      qty: merged.qty,
+      uom: merged.uom,
+      brandPreference: merged.brandPreference,
+      paymentTerms: merged.paymentTerms,
+      transportIncluded: merged.transportIncluded,
+      siteCoordinator: merged.siteCoordinator,
+      summaryText,
+      status: "draft",
+      messages: {
+        create: [
+          { sender: "buyer", text: firstMessage },
+          { sender: "aera", text: result.reply },
+        ],
+      },
+    },
+    include: REQUIREMENT_INCLUDE,
+  });
+  await audit(created.id, "buyer", "requirement_created", `From chat: "${firstMessage}"`);
+  return { requirement: mapRequirement(created), reply: result.reply, isComplete: result.isComplete };
 }
 
-export function postMessage(id: string, text: string) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  const result = draftTurn(text, req);
-  const buyerMsg: Message = { id: uid("msg"), sender: "buyer", text, createdAt: new Date().toISOString() };
-  const aeraMsg: Message = { id: uid("msg"), sender: "aera", text: result.reply, createdAt: new Date().toISOString() };
-  const updated: Requirement = { ...req, ...result.patch, messages: [...req.messages, buyerMsg, aeraMsg] };
-  if (result.isComplete) updated.summaryText = buildSummary(updated);
-  db.requirements.set(id, updated);
-  audit(id, "buyer", "message_sent", text);
-  return { requirement: updated, reply: result.reply, isComplete: result.isComplete };
+export async function postMessage(id: string, text: string) {
+  const row = await getRequirementRow(id);
+  if (!row) throw new Error("not_found");
+  const current = mapRequirement(row);
+  const result = draftTurn(text, current);
+  const merged: Requirement = { ...current, ...result.patch };
+  const summaryText = result.isComplete ? buildSummary(merged) : current.summaryText;
+
+  const updated = await prisma.requirement.update({
+    where: { id },
+    data: {
+      itemCategory: merged.itemCategory,
+      itemName: merged.itemName,
+      itemGrade: merged.itemGrade,
+      deliveryDate: merged.deliveryDate,
+      siteAddress: merged.siteAddress,
+      qty: merged.qty,
+      uom: merged.uom,
+      brandPreference: merged.brandPreference,
+      paymentTerms: merged.paymentTerms,
+      transportIncluded: merged.transportIncluded,
+      siteCoordinator: merged.siteCoordinator,
+      summaryText,
+      messages: { create: [{ sender: "buyer", text }, { sender: "aera", text: result.reply }] },
+    },
+    include: REQUIREMENT_INCLUDE,
+  });
+  await audit(id, "buyer", "message_sent", text);
+  return { requirement: mapRequirement(updated), reply: result.reply, isComplete: result.isComplete };
 }
 
-export function patchRequirement(id: string, patch: Partial<Requirement> & { summaryText?: string }) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  const before = { ...req };
-  const updated: Requirement = { ...req, ...patch, summaryEdited: patch.summaryText ? true : req.summaryEdited };
-  db.requirements.set(id, updated);
-  audit(id, "buyer", "field_edited", `${JSON.stringify(before)} -> ${JSON.stringify(patch)}`);
-  return updated;
+export async function patchRequirement(id: string, patch: Partial<Requirement> & { summaryText?: string }) {
+  const before = await getRequirementRow(id);
+  if (!before) throw new Error("not_found");
+  const { messages: _m, offers: _o, ...rest } = patch as Record<string, unknown>;
+  const data: Record<string, unknown> = { ...rest };
+  if (patch.summaryText) data.summaryEdited = true;
+  const updated = await prisma.requirement.update({ where: { id }, data, include: REQUIREMENT_INCLUDE });
+  await audit(id, "buyer", "field_edited", `${JSON.stringify(mapRequirement(before))} -> ${JSON.stringify(patch)}`);
+  return mapRequirement(updated);
 }
 
 const METRO_CITIES = ["Bangalore", "Mumbai", "Delhi", "Chennai", "Kolkata", "Ahmedabad", "Pune", "Hyderabad"];
 
-function shortlistVendors(req: Requirement): { shortlisted: string[]; funnel: string[] } {
+function shortlistVendors(req: Requirement, allVendors: Vendor[]): { shortlisted: string[]; funnel: string[] } {
   const funnel: string[] = [];
-  let pool = VENDORS.slice();
+  let pool = allVendors.slice();
   funnel.push(`${pool.length} vendors total`);
   if (req.itemCategory) {
     pool = pool.filter((v) => v.suppliesCategories.includes(req.itemCategory as string));
@@ -157,9 +271,9 @@ function shortlistVendors(req: Requirement): { shortlisted: string[]; funnel: st
   return { shortlisted: pool.map((v) => v.id), funnel };
 }
 
-function rfxMessageText(req: Requirement): string {
+function rfxMessageText(req: Requirement, buyerName: string): string {
   return (
-    `New RFx from ${db.buyer.name} via Aerchain\n\n` +
+    `New RFx from ${buyerName} via Aerchain\n\n` +
     `${req.code}: ${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}\n` +
     (req.qty && req.uom ? `Quantity: ${req.qty} ${req.uom}\n` : "") +
     `Deliver to: ${req.siteAddress}\n` +
@@ -169,12 +283,13 @@ function rfxMessageText(req: Requirement): string {
   );
 }
 
-function logDispatch(entry: Omit<DispatchLogEntry, "id" | "sentAt">) {
-  db.dispatchLog.push({ ...entry, id: uid("dispatch"), sentAt: new Date().toISOString() });
+async function logDispatch(entry: Omit<DispatchLogEntry, "id" | "sentAt">) {
+  await prisma.dispatchLogEntry.create({ data: entry });
 }
 
-export function getDispatchLog(requirementId: string): DispatchLogEntry[] {
-  return db.dispatchLog.filter((d) => d.requirementId === requirementId);
+export async function getDispatchLog(requirementId: string): Promise<DispatchLogEntry[]> {
+  const rows = await prisma.dispatchLogEntry.findMany({ where: { requirementId }, orderBy: { sentAt: "asc" } });
+  return rows.map(mapDispatch);
 }
 
 export function repliedCount(req: Requirement): { replied: number; total: number; remaining: number } {
@@ -183,90 +298,114 @@ export function repliedCount(req: Requirement): { replied: number; total: number
   return { replied, total, remaining: Math.max(0, total - replied) };
 }
 
+// Once any vendor sharing a dummy test phone number has linked a chat via /start, every other
+// vendor on that same number can be dispatched to through the same chat (lets one real Telegram
+// account role-play several demo vendors) — replaces the old in-memory linkedChatIdByPhone map.
+async function resolveChatIdForVendor(vendor: VendorRow): Promise<string | null> {
+  if (vendor.telegramChatId) return vendor.telegramChatId;
+  const sibling = await prisma.vendor.findFirst({ where: { telegramPhone: vendor.telegramPhone, telegramChatId: { not: null } } });
+  return sibling?.telegramChatId ?? null;
+}
+
 export async function confirmRequirement(id: string, action: "send" | "draft") {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
+  const row = await getRequirementRow(id);
+  if (!row) throw new Error("not_found");
   if (action === "draft") {
-    audit(id, "buyer", "draft_saved", "Saved as draft");
-    return req;
+    await audit(id, "buyer", "draft_saved", "Saved as draft");
+    return mapRequirement(row);
   }
-  const { shortlisted, funnel } = shortlistVendors(req);
-  audit(id, "aera", "vendor_shortlisted", funnel.join(" -> "));
-  const updated: Requirement = { ...req, status: "sent_to_vendor", shortlistedVendorIds: shortlisted };
-  db.requirements.set(id, updated);
-  audit(id, "system", "dispatched", `Sent to vendors: ${shortlisted.join(", ") || "none matched"}`);
+  const req = mapRequirement(row);
+  const buyer = await prisma.buyer.findFirst();
+  const vendorRows = await prisma.vendor.findMany();
+  const { shortlisted, funnel } = shortlistVendors(req, vendorRows.map(mapVendor));
+  await audit(id, "aera", "vendor_shortlisted", funnel.join(" -> "));
+
+  const updatedRow = await prisma.requirement.update({
+    where: { id },
+    data: { status: "sent_to_vendor", shortlistedVendorIds: shortlisted },
+    include: REQUIREMENT_INCLUDE,
+  });
+  const updated = mapRequirement(updatedRow);
+  await audit(id, "system", "dispatched", `Sent to vendors: ${shortlisted.join(", ") || "none matched"}`);
 
   // Every shortlisted vendor gets contacted on BOTH channels in parallel — this is the "quote
   // sent, waiting for rates" moment the buyer sees on screen.
   for (const vendorId of shortlisted) {
-    const vendor = VENDORS.find((v) => v.id === vendorId);
+    const vendor = vendorRows.find((v) => v.id === vendorId);
     if (!vendor) continue;
-    const body = rfxMessageText(updated);
+    const body = rfxMessageText(updated, buyer?.name ?? "the buyer");
 
-    // Email — real send once personal Gmail is connected; logged either way.
     const delivered = await sendEmail(vendor.email, body);
-    logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
-    audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
+    await logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
+    await audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
 
-    // Telegram — real send if this vendor's chat (or the chat linked for its dummy number) is known.
     if (tg.isConfigured()) {
-      const chatId = db.vendorChats.get(vendorId) ?? db.linkedChatIdByPhone.get(vendor.telegramPhone);
+      const chatId = await resolveChatIdForVendor(vendor);
       if (chatId) {
-        db.vendorChats.set(vendorId, chatId);
-        db.chatContext.set(chatId, { requirementId: id, vendorId });
+        if (!vendor.telegramChatId) await prisma.vendor.update({ where: { id: vendor.id }, data: { telegramChatId: chatId } });
+        await prisma.telegramLink.upsert({
+          where: { chatId },
+          update: { vendorId, requirementId: id },
+          create: { chatId, vendorId, requirementId: id },
+        });
         try {
           await tg.sendMessage(chatId, `=== Quote request for ${vendor.name} ===\n\n${body}`);
-          logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: true });
-          audit(id, "system", "telegram_sent", `Message sent to ${vendor.name} (${vendor.telegramPhone})`);
+          await logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: true });
+          await audit(id, "system", "telegram_sent", `Message sent to ${vendor.name} (${vendor.telegramPhone})`);
         } catch (err) {
-          logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
-          audit(id, "system", "telegram_send_failed", `${vendorId}: ${(err as Error).message}`);
+          await logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
+          await audit(id, "system", "telegram_send_failed", `${vendorId}: ${(err as Error).message}`);
         }
       } else {
-        logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
+        await logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
       }
     }
   }
   return updated;
 }
 
-export function listOffers(id: string) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  const ranking = rankOffers(req.offers, Object.fromEntries(VENDORS.map((v) => [v.id, v.dealsLast30Days])));
-  return { offers: req.offers, ranking, vendors: VENDORS };
+export async function listOffers(id: string) {
+  const row = await getRequirementRow(id);
+  if (!row) throw new Error("not_found");
+  const vendorRows = await prisma.vendor.findMany();
+  const dealsLookup = Object.fromEntries(vendorRows.map((v) => [v.id, v.dealsLast30Days]));
+  const offers = row.offers.map(mapOffer);
+  const ranking = rankOffers(offers, dealsLookup);
+  return { offers, ranking, vendors: vendorRows.map(mapVendor) };
 }
 
-export function submitVendorReply(requirementId: string, vendorId: string, rawText: string, channelOverride?: ReplyChannel) {
-  const req = db.requirements.get(requirementId);
-  if (!req) throw new Error("not_found");
+export async function submitVendorReply(requirementId: string, vendorId: string, rawText: string, channelOverride?: ReplyChannel) {
+  const row = await getRequirementRow(requirementId);
+  if (!row) throw new Error("not_found");
+  const req = mapRequirement(row);
+  const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
   const extraction = extractOffer(rawText);
   const format = detectFormat(rawText);
-  const vendor = VENDORS.find((v) => v.id === vendorId);
-  const offer: Offer = {
-    id: uid("off"),
-    vendorId,
-    requirementId,
-    rawSource: rawText,
-    replyChannel: channelOverride ?? vendor?.replyChannel ?? "email",
-    sourceFormat: format,
-    rate: extraction.rate,
-    rateBasis: extraction.rateBasis,
-    brandOffered: extraction.brandOffered,
-    paymentTerms: extraction.paymentTerms,
-    transportIncluded: extraction.transportIncluded,
-    deliveryDate: extraction.deliveryDate,
-    capacityUom: extraction.capacityUom,
-    capacityLeadDays: extraction.capacityLeadDays,
-    extractionConfidence: extraction.confidence,
-    missingFields: extraction.missingFields,
-    needsReview: extraction.confidence < 0.7,
-    receivedAt: new Date().toISOString(),
-  };
+
+  const offerRow = await prisma.offer.create({
+    data: {
+      requirementId,
+      vendorId,
+      rawSource: rawText,
+      replyChannel: channelOverride ?? vendor?.replyChannel ?? "email",
+      sourceFormat: format,
+      rate: extraction.rate,
+      rateBasis: extraction.rateBasis,
+      brandOffered: extraction.brandOffered,
+      paymentTerms: extraction.paymentTerms,
+      transportIncluded: extraction.transportIncluded,
+      deliveryDate: extraction.deliveryDate,
+      capacityUom: extraction.capacityUom,
+      capacityLeadDays: extraction.capacityLeadDays,
+      extractionConfidence: extraction.confidence,
+      missingFields: extraction.missingFields,
+      needsReview: extraction.confidence < 0.7,
+    },
+  });
   const wasFirst = req.offers.length === 0;
-  const updated: Requirement = { ...req, offers: [...req.offers, offer], status: "rate_received" };
-  db.requirements.set(requirementId, updated);
-  audit(requirementId, "system", "offer_received", `${vendor?.name ?? vendorId} via ${offer.replyChannel} (${format}), confidence ${offer.extractionConfidence}`);
+  const updatedRow = await prisma.requirement.update({ where: { id: requirementId }, data: { status: "rate_received" }, include: REQUIREMENT_INCLUDE });
+  const updated = mapRequirement(updatedRow);
+  await audit(requirementId, "system", "offer_received", `${vendor?.name ?? vendorId} via ${offerRow.replyChannel} (${format}), confidence ${offerRow.extractionConfidence}`);
 
   const { replied, total, remaining } = repliedCount(updated);
   const vendorName = vendor?.name ?? vendorId;
@@ -276,85 +415,87 @@ export function submitVendorReply(requirementId: string, vendorId: string, rawTe
       : wasFirst
         ? `${vendorName}'s rate has arrived`
         : `${vendorName}'s rate has arrived too`;
-  const notif: Notification = {
-    id: uid("notif"),
-    requirementId,
-    text,
-    meta:
-      `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
-      (remaining > 0 ? ` · ${remaining} remaining` : " · all in"),
-    read: false,
-    createdAt: new Date().toISOString(),
-  };
-  db.notifications.unshift(notif);
-  audit(requirementId, "system", "customer_notified", notif.text);
-  return { requirement: updated, offer };
+  const meta =
+    `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
+    (remaining > 0 ? ` · ${remaining} remaining` : " · all in");
+  await prisma.notification.create({ data: { requirementId, text, meta, read: false } });
+  await audit(requirementId, "system", "customer_notified", text);
+  return { requirement: updated, offer: mapOffer(offerRow) };
 }
 
-export function selectOffer(id: string, offerId: string) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  audit(id, "buyer", "offer_selected", offerId);
-  return req;
+export async function selectOffer(id: string, offerId: string) {
+  const row = await getRequirementRow(id);
+  if (!row) throw new Error("not_found");
+  await audit(id, "buyer", "offer_selected", offerId);
+  return mapRequirement(row);
 }
 
-export function acceptOffer(id: string, offerId: string) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  const offer = req.offers.find((o) => o.id === offerId);
+export async function acceptOffer(id: string, offerId: string) {
+  const offer = await prisma.offer.findUnique({ where: { id: offerId } });
   if (!offer) throw new Error("offer_not_found");
-  const dealAmount = offer.rate != null && req.qty ? offer.rate * req.qty : offer.rate;
-  const updated: Requirement = { ...req, status: "closed_deal", winningOfferId: offerId, dealAmount };
-  db.requirements.set(id, updated);
-  const vendor = VENDORS.find((v) => v.id === offer.vendorId);
-  audit(id, "buyer", "winner_selected", offer.vendorId);
-  audit(id, "system", "confirmation_sent", `To ${vendor?.name ?? offer.vendorId}`);
-  audit(id, "system", "requirement_closed", `Deal amount ${dealAmount}`);
-  return updated;
+  const row = await getRequirementRow(id);
+  if (!row) throw new Error("not_found");
+  const dealAmount = offer.rate != null && row.qty ? offer.rate * row.qty : offer.rate;
+  const updatedRow = await prisma.requirement.update({
+    where: { id },
+    data: { status: "closed_deal", winningOfferId: offerId, dealAmount },
+    include: REQUIREMENT_INCLUDE,
+  });
+  const vendor = await prisma.vendor.findUnique({ where: { id: offer.vendorId } });
+  await audit(id, "buyer", "winner_selected", offer.vendorId);
+  await audit(id, "system", "confirmation_sent", `To ${vendor?.name ?? offer.vendorId}`);
+  await audit(id, "system", "requirement_closed", `Deal amount ${dealAmount}`);
+  return mapRequirement(updatedRow);
 }
 
-export function cancelRequirement(id: string, reason: string) {
-  const req = db.requirements.get(id);
-  if (!req) throw new Error("not_found");
-  const updated: Requirement = { ...req, status: "cancelled" };
-  db.requirements.set(id, updated);
-  audit(id, "buyer", "requirement_cancelled", reason);
-  return updated;
+export async function cancelRequirement(id: string, reason: string) {
+  const updatedRow = await prisma.requirement.update({ where: { id }, data: { status: "cancelled" }, include: REQUIREMENT_INCLUDE }).catch(() => null);
+  if (!updatedRow) throw new Error("not_found");
+  await audit(id, "buyer", "requirement_cancelled", reason);
+  return mapRequirement(updatedRow);
 }
 
-export function getNotifications() {
-  return db.notifications;
+export async function getNotifications(): Promise<Notification[]> {
+  const rows = await prisma.notification.findMany({ orderBy: { createdAt: "desc" } });
+  return rows.map(mapNotification);
 }
 
-export function markNotificationRead(notifId: string) {
-  const n = db.notifications.find((x) => x.id === notifId);
-  if (n) n.read = true;
-  return db.notifications;
+export async function markNotificationRead(notifId: string): Promise<Notification[]> {
+  await prisma.notification.update({ where: { id: notifId }, data: { read: true } }).catch(() => null);
+  return getNotifications();
 }
 
-export function getAuditLog(id: string) {
-  return db.audit.filter((a) => a.requirementId === id);
+export async function getAuditLog(id: string): Promise<AuditEntry[]> {
+  const rows = await prisma.auditEntry.findMany({ where: { requirementId: id }, orderBy: { createdAt: "asc" } });
+  return rows.map(mapAudit);
 }
 
-export function getProfile() {
-  return db.buyer;
+export async function getProfile(): Promise<Buyer> {
+  const buyer = await prisma.buyer.findFirst();
+  if (!buyer) throw new Error("no_buyer_seeded");
+  return { name: buyer.name, billingAddress: buyer.billingAddress, siteAddress: buyer.siteAddress };
 }
 
-export function updateProfile(patch: Partial<Buyer>) {
-  db.buyer = { ...db.buyer, ...patch };
-  return db.buyer;
+export async function updateProfile(patch: Partial<Buyer>): Promise<Buyer> {
+  const buyer = await prisma.buyer.findFirst();
+  if (!buyer) throw new Error("no_buyer_seeded");
+  const updated = await prisma.buyer.update({ where: { id: buyer.id }, data: patch });
+  return { name: updated.name, billingAddress: updated.billingAddress, siteAddress: updated.siteAddress };
 }
 
-export function getVendors() {
-  return VENDORS;
+export async function getVendors(): Promise<Vendor[]> {
+  const rows = await prisma.vendor.findMany();
+  return rows.map(mapVendor);
 }
+
+let cachedBotUsername: string | null = null;
 
 export async function getBotUsername(): Promise<string | null> {
   if (!tg.isConfigured()) return null;
-  if (db.botUsername) return db.botUsername;
+  if (cachedBotUsername) return cachedBotUsername;
   try {
     const me = await tg.getMe();
-    db.botUsername = me.username;
+    cachedBotUsername = me.username;
     return me.username;
   } catch {
     return null;
@@ -365,13 +506,25 @@ export function getVendorLinkToken(vendorId: string, requirementId: string): str
   return `${vendorId}_${requirementId}`;
 }
 
-export function isVendorLinked(vendorId: string): boolean {
-  return db.vendorChats.has(vendorId);
+export async function isVendorLinked(vendorId: string): Promise<boolean> {
+  const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+  return !!vendor?.telegramChatId;
+}
+
+async function findPendingRequirementForVendor(vendorId: string): Promise<string | null> {
+  const rows = await prisma.requirement.findMany({
+    where: { status: { in: ["sent_to_vendor", "rate_received"] }, shortlistedVendorIds: { has: vendorId } },
+    include: { offers: true },
+    orderBy: { createdAt: "desc" },
+  });
+  const candidate = rows.find((r) => !r.offers.some((o) => o.vendorId === vendorId));
+  return candidate?.id ?? null;
 }
 
 // Handles both the long-poll loop (local dev) and the webhook route (deployed) — same logic,
 // same effect: a real vendor reply flows into the exact same extraction pipeline as the
-// in-app "reply as vendor" panel.
+// in-app "reply as vendor" panel. Vendor-chat linking is DB-backed (TelegramLink/Vendor rows),
+// so this resolves correctly no matter which serverless instance handles the request.
 export async function handleTelegramUpdate(update: tg.TgUpdate) {
   const msg = update.message;
   if (!msg) return;
@@ -387,59 +540,70 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
     }
     const vendorId = payload.slice(0, sep);
     const requirementId = payload.slice(sep + 1);
-    const req = db.requirements.get(requirementId);
-    const vendor = VENDORS.find((v) => v.id === vendorId);
-    if (!req || !vendor) {
+    const [row, vendor, buyer] = await Promise.all([
+      getRequirementRow(requirementId),
+      prisma.vendor.findUnique({ where: { id: vendorId } }),
+      prisma.buyer.findFirst(),
+    ]);
+    if (!row || !vendor) {
       await tg.sendMessage(chatId, "This requirement no longer exists.");
       return;
     }
-    db.vendorChats.set(vendorId, chatId);
-    db.chatContext.set(chatId, { requirementId, vendorId });
-    db.linkedChatIdByPhone.set(vendor.telegramPhone, chatId); // this chat now stands in for every vendor on the same dummy number
-    audit(requirementId, "system", "vendor_telegram_linked", `${vendor.name} linked chat ${chatId}`);
-    await tg.sendMessage(chatId, `Hi, this is Aera on behalf of ${db.buyer.name}.\n\n${rfxMessageText(req)}`);
+    await prisma.vendor.update({ where: { id: vendorId }, data: { telegramChatId: chatId } });
+    await prisma.telegramLink.upsert({
+      where: { chatId },
+      update: { vendorId, requirementId },
+      create: { chatId, vendorId, requirementId },
+    });
+    await audit(requirementId, "system", "vendor_telegram_linked", `${vendor.name} linked chat ${chatId}`);
+    await tg.sendMessage(chatId, `Hi, this is Aera on behalf of ${buyer?.name ?? "the buyer"}.\n\n${rfxMessageText(mapRequirement(row), buyer?.name ?? "the buyer")}`);
     return;
   }
 
   // Since every dummy vendor shares one real chat, a reply can start with "V2:" to say which
   // vendor it's answering for; otherwise it's assumed to answer whichever vendor was dispatched
   // to most recently in this chat.
-  let context = db.chatContext.get(chatId);
+  let link = await prisma.telegramLink.findUnique({ where: { chatId } });
   const prefixMatch = text.match(/^(V\d+)[:\-.,]?\s*/i);
   if (prefixMatch) {
     const vendorId = prefixMatch[1].toUpperCase();
-    const pendingReqId = findPendingRequirementForVendor(vendorId);
+    const pendingReqId = await findPendingRequirementForVendor(vendorId);
     if (pendingReqId) {
-      context = { requirementId: pendingReqId, vendorId };
-      db.chatContext.set(chatId, context);
+      link = await prisma.telegramLink.upsert({
+        where: { chatId },
+        update: { vendorId, requirementId: pendingReqId },
+        create: { chatId, vendorId, requirementId: pendingReqId },
+      });
     }
   }
-  if (!context) {
+  if (!link) {
     await tg.sendMessage(chatId, "I don't have an open request for this chat. Ask your buyer to resend the link.");
     return;
   }
 
   let rawText = (prefixMatch ? text.slice(prefixMatch[0].length) : text) || msg.caption || "";
-  if (!rawText && (msg.photo || msg.document)) {
-    rawText = "[Photo/file received, no caption text provided]";
+  const photo = msg.photo?.[msg.photo.length - 1];
+  if (!rawText && photo) {
+    try {
+      const buffer = await tg.downloadFile(photo.file_id);
+      const ocrText = await recognizeImageText(buffer);
+      rawText = ocrText ? `[OCR of photographed rate card]\n${ocrText}` : "[Photo received, OCR found no readable text]";
+    } catch (err) {
+      console.error("photo OCR pipeline failed", err);
+      rawText = "[Photo received, could not be read]";
+    }
+  } else if (!rawText && msg.document) {
+    rawText = "[Document received, no caption text provided]";
   }
   if (!rawText) return;
 
-  const { requirement } = submitVendorReply(context.requirementId, context.vendorId, rawText, "telegram");
-  const vendor = VENDORS.find((v) => v.id === context.vendorId);
+  const { requirement } = await submitVendorReply(link.requirementId, link.vendorId, rawText, "telegram");
+  const vendor = await prisma.vendor.findUnique({ where: { id: link.vendorId } });
   const { remaining } = repliedCount(requirement);
   await tg.sendMessage(
     chatId,
     `Got it — thanks. Your quote for ${requirement.code} has been recorded.` +
       (remaining > 0 ? ` Still waiting on ${remaining} other vendor(s).` : "")
   );
-  audit(context.requirementId, "system", "telegram_reply_received", `${vendor?.name ?? context.vendorId}: "${rawText.slice(0, 120)}"`);
-}
-
-function findPendingRequirementForVendor(vendorId: string): string | null {
-  const candidates = Array.from(db.requirements.values())
-    .filter((r) => (r.status === "sent_to_vendor" || r.status === "rate_received") && r.shortlistedVendorIds.includes(vendorId))
-    .filter((r) => !r.offers.some((o) => o.vendorId === vendorId))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return candidates[0]?.id ?? null;
+  await audit(link.requirementId, "system", "telegram_reply_received", `${vendor?.name ?? link.vendorId}: "${rawText.slice(0, 120)}"`);
 }

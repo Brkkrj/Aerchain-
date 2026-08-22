@@ -5,7 +5,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const body = await req.json();
   try {
-    const requirement = acceptOffer(id, body.offerId);
+    const requirement = await acceptOffer(id, body.offerId);
     return NextResponse.json({ requirement });
   } catch {
     return NextResponse.json({ error: "not_found" }, { status: 404 });

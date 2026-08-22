@@ -1,0 +1,152 @@
+// Schema mirrors src/lib/types.ts 1:1 so the API/UI contract doesn't change when the
+// in-memory store is swapped for this DB. See TECH_DESIGN.md §3 for the original design intent.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Buyer {
+  id             String @id @default(cuid())
+  name           String
+  billingAddress String
+  siteAddress    String
+}
+
+model Vendor {
+  id                  String   @id // stable ids ("V1".."V7") — referenced in Telegram deep-link payloads
+  name                String
+  suppliesCategories  String[]
+  serviceLocations    String[]
+  capacityUomPerMonth Int
+  dealsLast30Days     Int      @default(0)
+  replyChannel        String
+  email               String
+  telegramPhone       String
+  telegramChatId      String?
+  offers              Offer[]
+
+  @@index([telegramPhone])
+}
+
+model Requirement {
+  id                   String    @id @default(cuid())
+  code                 String    @unique
+  itemCategory         String?
+  itemName             String?
+  itemGrade            String?
+  deliveryDate         String?
+  siteAddress          String?
+  qty                  Int?
+  uom                  String?
+  brandPreference      String?
+  paymentTerms         String?
+  transportIncluded    Boolean?
+  siteCoordinator      String?
+  summaryText          String?
+  summaryEdited        Boolean   @default(false)
+  status               String    @default("draft")
+  dealAmount           Float?
+  winningOfferId       String?
+  createdAt            DateTime  @default(now())
+  shortlistedVendorIds String[]  @default([])
+
+  messages             Message[]
+  offers               Offer[]
+  notifications        Notification[]
+  auditEntries         AuditEntry[]
+  dispatchLogEntries   DispatchLogEntry[]
+  telegramLinks        TelegramLink[]
+}
+
+model Offer {
+  id                   String      @id @default(cuid())
+  vendorId             String
+  vendor               Vendor      @relation(fields: [vendorId], references: [id])
+  requirementId        String
+  requirement          Requirement @relation(fields: [requirementId], references: [id])
+  rawSource            String
+  replyChannel         String
+  sourceFormat         String
+  rate                 Float?
+  rateBasis            String?
+  brandOffered         String?
+  paymentTerms         String?
+  transportIncluded    Boolean?
+  deliveryDate         String?
+  capacityUom          Int?
+  capacityLeadDays     Int?
+  extractionConfidence Float       @default(0)
+  missingFields        String[]    @default([])
+  needsReview          Boolean     @default(false)
+  receivedAt           DateTime    @default(now())
+
+  @@index([requirementId])
+}
+
+model Message {
+  id            String       @id @default(cuid())
+  requirementId String?
+  requirement   Requirement? @relation(fields: [requirementId], references: [id])
+  sender        String
+  text          String
+  createdAt     DateTime     @default(now())
+
+  @@index([requirementId])
+}
+
+model Notification {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  text          String
+  meta          String
+  read          Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+}
+
+model AuditEntry {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  actor         String
+  action        String
+  detail        String
+  createdAt     DateTime    @default(now())
+
+  @@index([requirementId])
+}
+
+model DispatchLogEntry {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  vendorId      String
+  channel       String
+  to            String
+  message       String
+  delivered     Boolean
+  sentAt        DateTime    @default(now())
+
+  @@index([requirementId])
+}
+
+// Replaces the old in-memory chatContext map: which requirement+vendor a Telegram chat is
+// currently answering for. Keyed by chat id so a reply resolves correctly no matter which
+// serverless instance handles the webhook request.
+model TelegramLink {
+  chatId        String      @id
+  vendorId      String
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  updatedAt     DateTime    @updatedAt
+}
+
+// Atomic counter for human-readable requirement codes (REQ-2418, ...).
+model Counter {
+  name  String @id
+  value Int
+}

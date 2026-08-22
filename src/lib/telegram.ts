@@ -61,6 +61,15 @@ export async function getFileUrl(fileId: string): Promise<string> {
   return `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
 }
 
+// Downloads a Telegram-hosted photo/document so it can be OCR'd — see extraction.ts's
+// recognizeImageText. Telegram photo arrays are smallest-to-largest; callers pass the last one.
+export async function downloadFile(fileId: string): Promise<Buffer> {
+  const url = await getFileUrl(fileId);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download Telegram file: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export function botDeepLink(botUsername: string, payload: string): string {
   return `https://t.me/${botUsername}?start=${payload}`;
 }

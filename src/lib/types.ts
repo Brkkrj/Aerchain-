@@ -84,11 +84,14 @@ export interface Requirement {
   shortlistedVendorIds: string[];
 }
 
+export type NotificationType = "vendor_replied" | "all_replied";
+
 export interface Notification {
   id: string;
   requirementId: string;
   text: string;
   meta: string;
+  type: NotificationType;
   read: boolean;
   createdAt: string;
 }

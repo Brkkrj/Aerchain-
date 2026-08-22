@@ -3,13 +3,17 @@ import { createRequirement, listRequirements } from "@/server/store";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const list = await listRequirements({
+  const dateRange = searchParams.get("dateRange") as "7" | "30" | "90" | "all" | null;
+  const { requirements, total } = await listRequirements({
     q: searchParams.get("q") ?? undefined,
     status: searchParams.get("status") ?? undefined,
     category: searchParams.get("category") ?? undefined,
     sortDesc: searchParams.get("sort") !== "asc",
+    dateRange: dateRange ?? undefined,
+    page: searchParams.get("page") ? Number(searchParams.get("page")) : undefined,
+    pageSize: searchParams.get("pageSize") ? Number(searchParams.get("pageSize")) : undefined,
   });
-  return NextResponse.json({ requirements: list });
+  return NextResponse.json({ requirements, total });
 }
 
 export async function POST(req: NextRequest) {

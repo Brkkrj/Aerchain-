@@ -10,13 +10,24 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listRequirements: (params: { q?: string; status?: string; category?: string; sort?: "asc" | "desc" }) => {
+  listRequirements: (params: {
+    q?: string;
+    status?: string;
+    category?: string;
+    sort?: "asc" | "desc";
+    dateRange?: "7" | "30" | "90" | "all";
+    page?: number;
+    pageSize?: number;
+  }) => {
     const usp = new URLSearchParams();
     if (params.q) usp.set("q", params.q);
     if (params.status) usp.set("status", params.status);
     if (params.category) usp.set("category", params.category);
     if (params.sort) usp.set("sort", params.sort);
-    return jsonFetch<{ requirements: Requirement[] }>(`/api/requirements?${usp.toString()}`);
+    if (params.dateRange) usp.set("dateRange", params.dateRange);
+    if (params.page) usp.set("page", String(params.page));
+    if (params.pageSize) usp.set("pageSize", String(params.pageSize));
+    return jsonFetch<{ requirements: Requirement[]; total: number }>(`/api/requirements?${usp.toString()}`);
   },
   createRequirement: (message: string) =>
     jsonFetch<{ requirement: Requirement; reply: string; isComplete: boolean }>("/api/requirements", {

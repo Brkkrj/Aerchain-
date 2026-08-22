@@ -106,7 +106,15 @@ function mapVendor(v: VendorRow): Vendor {
 }
 
 function mapNotification(n: NotificationRow): Notification {
-  return { id: n.id, requirementId: n.requirementId, text: n.text, meta: n.meta, read: n.read, createdAt: n.createdAt.toISOString() };
+  return {
+    id: n.id,
+    requirementId: n.requirementId,
+    text: n.text,
+    meta: n.meta,
+    type: n.type as Notification["type"],
+    read: n.read,
+    createdAt: n.createdAt.toISOString(),
+  };
 }
 
 function mapAudit(a: AuditRow): AuditEntry {
@@ -152,11 +160,23 @@ async function sendEmail(to: string, subject: string, body: string): Promise<boo
   }
 }
 
-export async function listRequirements(params: { q?: string; status?: string; category?: string; sortDesc?: boolean }) {
+export async function listRequirements(params: {
+  q?: string;
+  status?: string;
+  category?: string;
+  sortDesc?: boolean;
+  dateRange?: "7" | "30" | "90" | "all";
+  page?: number;
+  pageSize?: number;
+}): Promise<{ requirements: Requirement[]; total: number }> {
   const q = (params.q ?? "").trim();
   const where: Record<string, unknown> = {};
   if (params.status && params.status !== "all") where.status = params.status;
   if (params.category && params.category !== "all") where.itemCategory = params.category;
+  if (params.dateRange && params.dateRange !== "all") {
+    const days = Number(params.dateRange);
+    where.createdAt = { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
+  }
   if (q) {
     where.OR = [
       { code: { contains: q, mode: "insensitive" } },
@@ -164,12 +184,19 @@ export async function listRequirements(params: { q?: string; status?: string; ca
       { offers: { some: { vendor: { name: { contains: q, mode: "insensitive" } } } } },
     ];
   }
-  const rows = await prisma.requirement.findMany({
-    where,
-    include: REQUIREMENT_INCLUDE,
-    orderBy: { createdAt: params.sortDesc === false ? "asc" : "desc" },
-  });
-  return rows.map(mapRequirement);
+  const pageSize = params.pageSize ?? 10;
+  const page = Math.max(1, params.page ?? 1);
+  const [rows, total] = await Promise.all([
+    prisma.requirement.findMany({
+      where,
+      include: REQUIREMENT_INCLUDE,
+      orderBy: { createdAt: params.sortDesc === false ? "asc" : "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.requirement.count({ where }),
+  ]);
+  return { requirements: rows.map(mapRequirement), total };
 }
 
 export async function getRequirement(id: string): Promise<Requirement | undefined> {
@@ -430,16 +457,17 @@ export async function submitVendorReply(requirementId: string, vendorId: string,
 
   const { replied, total, remaining } = repliedCount(updated);
   const vendorName = vendor?.name ?? vendorId;
-  const text =
-    remaining === 0
-      ? `All ${total} vendor${total === 1 ? "" : "s"} have replied — compare rates now`
-      : wasFirst
-        ? `${vendorName}'s rate has arrived`
-        : `${vendorName}'s rate has arrived too`;
+  const allIn = remaining === 0;
+  const text = allIn
+    ? `All ${total} vendor${total === 1 ? "" : "s"} have replied — compare rates now`
+    : wasFirst
+      ? `${vendorName}'s rate has arrived`
+      : `${vendorName}'s rate has arrived too`;
   const meta =
     `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
     (remaining > 0 ? ` · ${remaining} remaining` : " · all in");
-  await prisma.notification.create({ data: { requirementId, text, meta, read: false } });
+  const type: Notification["type"] = allIn ? "all_replied" : "vendor_replied";
+  await prisma.notification.create({ data: { requirementId, text, meta, type, read: false } });
   await audit(requirementId, "system", "customer_notified", text);
   return { requirement: updated, offer: mapOffer(offerRow) };
 }

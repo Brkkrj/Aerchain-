@@ -2,7 +2,36 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Notification } from "@/lib/types";
+import { Notification, NotificationType } from "@/lib/types";
+
+function formatNotificationTime(iso: string): string {
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return date.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function NotificationIcon({ type }: { type: NotificationType }) {
+  const style = { flex: "none" as const, marginTop: 1 };
+  if (type === "all_replied") {
+    return (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--success)" strokeWidth="1.5" style={style}>
+        <circle cx="8" cy="8" r="6.5" />
+        <path d="M5.3 8.2l1.8 1.8 3.6-3.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--coral)" strokeWidth="1.5" style={style}>
+      <path d="M3 3.5h10v7a1 1 0 0 1-1 1H6.5L3 14.5v-11Z" strokeLinejoin="round" />
+      <path d="M5.5 6.5h5M5.5 8.7h3" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 function Logo() {
   return (
@@ -139,20 +168,19 @@ export default function Header() {
                     background: !n.read ? "#FBFBFA" : "var(--white)",
                   }}
                 >
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      marginTop: 6,
-                      flex: "none",
-                      background: !n.read ? "var(--coral)" : "var(--border)",
-                    }}
-                  />
-                  <div>
-                    <div style={{ fontSize: 14, color: "var(--charcoal)" }}>{n.text}</div>
+                  <NotificationIcon type={n.type} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontSize: 14, color: "var(--charcoal)" }}>{n.text}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", flex: "none" }}>{formatNotificationTime(n.createdAt)}</div>
+                    </div>
                     <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{n.meta}</div>
                   </div>
+                  {!n.read && (
+                    <span
+                      style={{ width: 7, height: 7, borderRadius: "50%", marginTop: 6, flex: "none", background: "var(--coral)" }}
+                    />
+                  )}
                 </div>
               ))}
             </div>

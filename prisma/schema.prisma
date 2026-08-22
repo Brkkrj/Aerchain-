@@ -104,6 +104,7 @@ model Notification {
   requirement   Requirement @relation(fields: [requirementId], references: [id])
   text          String
   meta          String
+  type          String      @default("vendor_replied") // "vendor_replied" | "all_replied" — drives the bell dropdown's icon
   read          Boolean     @default(false)
   createdAt     DateTime    @default(now())
 }

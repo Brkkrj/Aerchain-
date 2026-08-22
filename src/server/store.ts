@@ -3,6 +3,7 @@
 // or fails to share state across serverless cold starts/instances — that was the root cause of
 // requirements, offers, and vendor-Telegram links disappearing in production. Every mutation here
 // is genuine: actual DB writes, actual extraction parsing, an actual audit trail.
+import { Resend } from "resend";
 import { prisma } from "@/lib/db";
 import { extractOffer, detectFormat, rankOffers, recognizeImageText } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
@@ -133,11 +134,22 @@ async function nextCode(): Promise<string> {
   return `REQ-${counter.value}`;
 }
 
-// Real email sending is not wired up yet (needs the buyer's personal Gmail connected as a tool).
-// Once it is, replace this function's body with an actual send call; every call site already has
-// the right (to, subject-ish, body) shape.
-async function sendEmail(_to: string, _body: string): Promise<boolean> {
-  return false; // false = composed and logged, but not actually delivered
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+// This is the only automatic way a brand-new vendor finds out Aera exists at all: Telegram's
+// Bot API refuses to let a bot message someone who hasn't started a chat with it (a hard
+// platform anti-spam rule, not something we can configure around), so the initial contact has
+// to arrive over a channel a bot CAN push to unprompted — email. The email carries the same RFx
+// text as the Telegram dispatch, plus that vendor's personal "start the bot" link.
+async function sendEmail(to: string, subject: string, body: string): Promise<boolean> {
+  if (!resend) return false; // no RESEND_API_KEY configured — composed and logged, not delivered
+  try {
+    await resend.emails.send({ from: "Aera <onboarding@resend.dev>", to, subject, text: body });
+    return true;
+  } catch (err) {
+    console.error("email send failed", err);
+    return false;
+  }
 }
 
 export async function listRequirements(params: { q?: string; status?: string; category?: string; sortDesc?: boolean }) {
@@ -271,7 +283,7 @@ function shortlistVendors(req: Requirement, allVendors: Vendor[]): { shortlisted
   return { shortlisted: pool.map((v) => v.id), funnel };
 }
 
-function rfxMessageText(req: Requirement, buyerName: string): string {
+function rfxMessageText(req: Requirement, buyerName: string, telegramLink?: string | null): string {
   return (
     `New RFx from ${buyerName} via Aerchain\n\n` +
     `${req.code}: ${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}\n` +
@@ -279,7 +291,10 @@ function rfxMessageText(req: Requirement, buyerName: string): string {
     `Deliver to: ${req.siteAddress}\n` +
     `Needed by: ${req.deliveryDate}\n\n` +
     `Please reply with your rate, payment terms, transport (included/excluded), and delivery date. ` +
-    `Any format is fine — plain text, a pasted rate card, or a photo.`
+    `Any format is fine — plain text, a pasted rate card, or a photo.` +
+    (telegramLink
+      ? `\n\nFastest way to reply: open this link and send your quote on Telegram — ${telegramLink}`
+      : "")
   );
 }
 
@@ -328,19 +343,25 @@ export async function confirmRequirement(id: string, action: "send" | "draft") {
   const updated = mapRequirement(updatedRow);
   await audit(id, "system", "dispatched", `Sent to vendors: ${shortlisted.join(", ") || "none matched"}`);
 
-  // Every shortlisted vendor gets contacted on BOTH channels in parallel — this is the "quote
-  // sent, waiting for rates" moment the buyer sees on screen.
+  const botUsername = await getBotUsername();
+
+  // Every shortlisted vendor gets contacted on BOTH channels — this is the "quote sent, waiting
+  // for rates" moment the buyer sees on screen. Telegram can only push to a vendor who has
+  // already started a chat with the bot (a hard platform rule), so a vendor who hasn't linked
+  // yet gets their personal "start the bot" link in the email instead — that's the only
+  // automatic way a brand-new vendor discovers Aera at all.
   for (const vendorId of shortlisted) {
     const vendor = vendorRows.find((v) => v.id === vendorId);
     if (!vendor) continue;
-    const body = rfxMessageText(updated, buyer?.name ?? "the buyer");
+    const chatId = tg.isConfigured() ? await resolveChatIdForVendor(vendor) : null;
+    const telegramLink = !chatId && botUsername ? tg.botDeepLink(botUsername, getVendorLinkToken(vendorId, id)) : null;
+    const body = rfxMessageText(updated, buyer?.name ?? "the buyer", telegramLink);
 
-    const delivered = await sendEmail(vendor.email, body);
+    const delivered = await sendEmail(vendor.email, `New RFx: ${updated.code} — ${updated.itemName ?? updated.itemCategory}`, body);
     await logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
     await audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
 
     if (tg.isConfigured()) {
-      const chatId = await resolveChatIdForVendor(vendor);
       if (chatId) {
         if (!vendor.telegramChatId) await prisma.vendor.update({ where: { id: vendor.id }, data: { telegramChatId: chatId } });
         await prisma.telegramLink.upsert({

@@ -381,7 +381,8 @@ export async function confirmRequirement(id: string, action: "send" | "draft") {
     const body = rfxMessageText(updated, buyer?.name ?? "the buyer", telegramLink);
 
     const replyTo = gmail.isConfigured() ? gmail.replyToAddress(vendorId, id) : undefined;
-    const delivered = await sendEmail(vendor.email, `New RFx: ${updated.code} — ${updated.itemName ?? updated.itemCategory}`, body, replyTo);
+    const subject = `Quote Request for ${vendor.name} — ${updated.itemName ?? updated.itemCategory} (${updated.code})`;
+    const delivered = await sendEmail(vendor.email, subject, body, replyTo);
     await logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
     await audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
 

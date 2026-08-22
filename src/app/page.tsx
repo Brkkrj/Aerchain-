@@ -92,7 +92,8 @@ export default function HomePage() {
           </button>
         </div>
 
-        <Card style={{ overflow: "hidden" }}>
+        <Card style={{ overflow: "auto" }}>
+          <div style={{ minWidth: 640 }}>
           <div
             style={{
               display: "grid",
@@ -143,6 +144,7 @@ export default function HomePage() {
               </span>
             </div>
           ))}
+          </div>
         </Card>
       </Container>
     </Shell>

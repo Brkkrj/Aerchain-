@@ -33,6 +33,14 @@ export default function RequirementPage() {
     load();
   }, [load]);
 
+  // Vendor replies over Telegram arrive asynchronously — poll while waiting so the screen
+  // updates on its own when a real reply comes in, not just after a manual action.
+  useEffect(() => {
+    if (!req || req.status === "closed_deal" || req.status === "cancelled" || req.status === "draft") return;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [req, load]);
+
   if (loading || !req) {
     return (
       <Shell>
@@ -175,6 +183,9 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
 }
 
 function SentScreen({ req, vendors, onDone }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
+  const total = req.shortlistedVendorIds.length;
+  const replied = new Set(req.offers.map((o) => o.vendorId)).size;
+  const remaining = Math.max(0, total - replied);
   return (
     <Container style={{ maxWidth: 640, textAlign: "center" }}>
       <div style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "40px auto 20px" }}>
@@ -182,6 +193,10 @@ function SentScreen({ req, vendors, onDone }: { req: Requirement; vendors: Vendo
       </div>
       <PageTitle>We&apos;ve sent the quote to vendors.</PageTitle>
       <Subtitle>Once we get the rates, we&apos;ll notify you. Nothing else to do here.</Subtitle>
+      <div style={{ marginTop: 16, display: "inline-block", background: "var(--white)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 16px", font: "600 13px/1 var(--font-inter), sans-serif" }}>
+        {replied} of {total} vendor{total === 1 ? "" : "s"} replied
+        {remaining > 0 && <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}> · {remaining} remaining</span>}
+      </div>
       <div style={{ marginTop: 24, textAlign: "left" }}>
         <VendorReplyPanel req={req} vendors={vendors} onDone={onDone} />
       </div>
@@ -195,6 +210,15 @@ function VendorReplyPanel({ req, vendors, onDone }: { req: Requirement; vendors:
   const [openVendor, setOpenVendor] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tgLinks, setTgLinks] = useState<{ vendorId: string; linked: boolean; link: string | null }[]>([]);
+  const [tgConfigured, setTgConfigured] = useState(false);
+
+  useEffect(() => {
+    api.getTelegramLinks(req.id).then(({ configured, links }) => {
+      setTgConfigured(configured);
+      setTgLinks(links);
+    });
+  }, [req.id, req.offers.length]);
 
   async function submit(vendorId: string) {
     if (!text.trim()) return;
@@ -210,26 +234,43 @@ function VendorReplyPanel({ req, vendors, onDone }: { req: Requirement; vendors:
     <Card style={{ padding: 20 }}>
       <div style={{ font: "600 16px/1.3 var(--font-inter), sans-serif", marginBottom: 4 }}>Vendor replies</div>
       <div style={{ font: "400 13px/1.5 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginBottom: 16 }}>
-        This is where a vendor&apos;s reply — over email, Telegram, whatever format — lands and gets read automatically.
-        For this demo, submit a reply on a vendor&apos;s behalf below (a real one, or the sample fixture for that vendor).
+        {tgConfigured
+          ? "Real replies on Telegram land here automatically. You can also submit a reply manually below for testing."
+          : "This is where a vendor's reply — over Telegram, or any format — lands and gets read automatically. Telegram isn't connected yet, so submit a reply manually below for this demo."}
       </div>
       {shortlisted.length === 0 && <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>No vendors matched this requirement.</div>}
       {shortlisted.map((v) => {
         const replied = repliedIds.has(v.id);
+        const tgInfo = tgLinks.find((l) => l.vendorId === v.id);
         return (
           <div key={v.id} style={{ borderTop: "1px solid #EFEFED", padding: "12px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <div style={{ fontSize: 14 }}>
                 <strong>{v.name}</strong>{" "}
-                <span style={{ color: "var(--text-secondary)" }}>· via {v.replyChannel}</span>
+                <span style={{ color: "var(--text-secondary)" }}>
+                  · via {v.replyChannel}
+                  {tgInfo?.linked && !replied ? " (linked, waiting for reply)" : ""}
+                </span>
               </div>
-              {replied ? (
-                <StatusPill status="rate_received" />
-              ) : (
-                <SecondaryButton onClick={() => setOpenVendor(openVendor === v.id ? null : v.id)} style={{ padding: "8px 14px", height: 36 }}>
-                  {openVendor === v.id ? "Close" : "Reply as this vendor"}
-                </SecondaryButton>
-              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                {tgInfo?.link && !replied && (
+                  <a
+                    href={tgInfo.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ background: "var(--white)", color: "var(--charcoal)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 14px", font: "600 13px/1 var(--font-inter), sans-serif", textDecoration: "none" }}
+                  >
+                    Open in Telegram
+                  </a>
+                )}
+                {replied ? (
+                  <StatusPill status="rate_received" />
+                ) : (
+                  <SecondaryButton onClick={() => setOpenVendor(openVendor === v.id ? null : v.id)} style={{ padding: "8px 14px", height: 36 }}>
+                    {openVendor === v.id ? "Close" : "Reply manually"}
+                  </SecondaryButton>
+                )}
+              </div>
             </div>
             {!replied && openVendor === v.id && (
               <div style={{ marginTop: 10 }}>

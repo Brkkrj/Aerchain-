@@ -16,6 +16,19 @@ export interface Vendor {
   capacityUomPerMonth: number;
   dealsLast30Days: number;
   replyChannel: ReplyChannel;
+  email: string;
+  telegramPhone: string;
+}
+
+export interface DispatchLogEntry {
+  id: string;
+  requirementId: string;
+  vendorId: string;
+  channel: ReplyChannel;
+  to: string; // email address or phone number this went "to"
+  message: string;
+  delivered: boolean; // true only for a channel that genuinely sent something
+  sentAt: string;
 }
 
 export interface Offer {

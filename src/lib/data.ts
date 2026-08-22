@@ -6,14 +6,20 @@ export const BUYER: Buyer = {
   siteAddress: "Plot 7, Yeshwantpur Industrial Suburb, Bangalore 560022",
 };
 
+// Dummy contact info for this prototype — every vendor points at the same real inbox/number
+// (yours) so you can play every vendor role while testing. See TECH_DESIGN.md for how this
+// swaps to real per-vendor contacts later.
+const DUMMY_EMAIL = "brkkrj@gmail.com";
+const DUMMY_PHONE = "9654600676";
+
 export const VENDORS: Vendor[] = [
-  { id: "V1", name: "Vendor 1", suppliesCategories: ["Aggregate", "Cement", "Sand"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 100, dealsLast30Days: 45, replyChannel: "email" },
-  { id: "V2", name: "Vendor 2", suppliesCategories: ["Aggregate", "TMT Bars"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 150, dealsLast30Days: 20, replyChannel: "telegram" },
-  { id: "V3", name: "Vendor 3", suppliesCategories: ["Aggregate", "Cement", "M-Sand"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 500, dealsLast30Days: 50, replyChannel: "email" },
-  { id: "V4", name: "Vendor 4", suppliesCategories: ["Aggregate"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 80, dealsLast30Days: 15, replyChannel: "telegram" },
-  { id: "V5", name: "Shah Steels", suppliesCategories: ["TMT Bars"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 200, dealsLast30Days: 30, replyChannel: "email" },
-  { id: "V6", name: "Sree Cements", suppliesCategories: ["Cement"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 300, dealsLast30Days: 18, replyChannel: "telegram" },
-  { id: "V7", name: "Not a real match Co.", suppliesCategories: ["Bricks"], serviceLocations: ["Chennai"], capacityUomPerMonth: 50, dealsLast30Days: 5, replyChannel: "email" },
+  { id: "V1", name: "Vendor 1", suppliesCategories: ["Aggregate", "Cement", "Sand"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 100, dealsLast30Days: 45, replyChannel: "email", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V2", name: "Vendor 2", suppliesCategories: ["Aggregate", "TMT Bars"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 150, dealsLast30Days: 20, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V3", name: "Vendor 3", suppliesCategories: ["Aggregate", "Cement", "M-Sand"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 500, dealsLast30Days: 50, replyChannel: "email", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V4", name: "Vendor 4", suppliesCategories: ["Aggregate"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 80, dealsLast30Days: 15, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V5", name: "Shah Steels", suppliesCategories: ["TMT Bars"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 200, dealsLast30Days: 30, replyChannel: "email", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V6", name: "Sree Cements", suppliesCategories: ["Cement"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 300, dealsLast30Days: 18, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+  { id: "V7", name: "Not a real match Co.", suppliesCategories: ["Bricks"], serviceLocations: ["Chennai"], capacityUomPerMonth: 50, dealsLast30Days: 5, replyChannel: "email", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
 ];
 
 // Raw "vendor reply" fixtures — four different formats, on purpose, to demo format-agnostic

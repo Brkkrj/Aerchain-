@@ -52,4 +52,8 @@ export const api = {
   getProfile: () => jsonFetch<{ profile: Buyer }>("/api/profile"),
   updateProfile: (patch: Partial<Buyer>) => jsonFetch<{ profile: Buyer }>("/api/profile", { method: "PATCH", body: JSON.stringify(patch) }),
   getVendors: () => jsonFetch<{ vendors: Vendor[] }>("/api/vendors"),
+  getTelegramLinks: (id: string) =>
+    jsonFetch<{ configured: boolean; links: { vendorId: string; linked: boolean; link: string | null }[] }>(
+      `/api/requirements/${id}/telegram-links`
+    ),
 };

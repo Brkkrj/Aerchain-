@@ -123,7 +123,7 @@ export function extractFromMessage(text: string): DraftPatch {
   return patch;
 }
 
-function missingMandatory(req: Requirement): (typeof MANDATORY_FIELDS)[number][] {
+export function missingMandatory(req: Requirement | DraftPatch): (typeof MANDATORY_FIELDS)[number][] {
   return MANDATORY_FIELDS.filter((f) => !req[f]);
 }
 
@@ -137,7 +137,9 @@ const QUESTIONS: Record<(typeof MANDATORY_FIELDS)[number], string> = {
 
 export function formatDate(iso: string | null): string {
   if (!iso) return "";
-  const [y, m, d] = iso.split("-");
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return iso; // fallback value wasn't a parsed date — show whatever was given
+  const [, y, m, d] = match;
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${Number(d)} ${months[Number(m) - 1]} ${y}`;
 }
@@ -162,6 +164,18 @@ export interface DraftTurnResult {
 
 export function draftTurn(message: string, current: Requirement): DraftTurnResult {
   const patch = extractFromMessage(message);
+
+  // Aera always asks about the FIRST missing mandatory field. If that's what it just asked,
+  // and the general-purpose extractor didn't pick anything up for it, treat the whole reply as
+  // a direct answer to that question rather than asking the same thing forever.
+  const pendingField = missingMandatory(current)[0];
+  if (pendingField && !patch[pendingField] && !current[pendingField]) {
+    const raw = message.trim();
+    if (raw) {
+      (patch as Record<string, string>)[pendingField] = raw;
+    }
+  }
+
   const merged: Requirement = { ...current, ...patch };
   const missing = missingMandatory(merged);
 

@@ -5,21 +5,34 @@
 import { extractOffer, detectFormat, rankOffers } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
 import { BUYER, OTHER_REQUIREMENTS, VENDORS, nextCode } from "@/lib/data";
+import * as tg from "@/lib/telegram";
 import {
   AuditEntry,
   Buyer,
+  DispatchLogEntry,
   Message,
   Notification,
   Offer,
+  ReplyChannel,
   Requirement,
   RequirementStatus,
 } from "@/lib/types";
+
+interface ChatContext {
+  requirementId: string;
+  vendorId: string;
+}
 
 interface DB {
   requirements: Map<string, Requirement>;
   notifications: Notification[];
   audit: AuditEntry[];
   buyer: Buyer;
+  vendorChats: Map<string, string>; // vendorId -> telegram chat id, once linked
+  chatContext: Map<string, ChatContext>; // telegram chat id -> active requirement+vendor
+  botUsername: string | null;
+  linkedChatId: string | null; // the one real chat, once anyone has /start'd the bot
+  dispatchLog: DispatchLogEntry[];
 }
 
 const globalForStore = globalThis as unknown as { __aeraStore?: DB };
@@ -27,7 +40,24 @@ const globalForStore = globalThis as unknown as { __aeraStore?: DB };
 function seed(): DB {
   const requirements = new Map<string, Requirement>();
   for (const r of OTHER_REQUIREMENTS) requirements.set(r.id, r);
-  return { requirements, notifications: [], audit: [], buyer: { ...BUYER } };
+  return {
+    requirements,
+    notifications: [],
+    audit: [],
+    buyer: { ...BUYER },
+    vendorChats: new Map(),
+    chatContext: new Map(),
+    botUsername: null,
+    linkedChatId: null,
+    dispatchLog: [],
+  };
+}
+
+// Real email sending is not wired up yet (see TECH_DESIGN.md / conversation notes — needs the
+// buyer's personal Gmail connected as a tool). Once it is, replace this function's body with an
+// actual send call; every call site already has the right (to, subject-ish, body) shape.
+async function sendEmail(_to: string, _body: string): Promise<boolean> {
+  return false; // false = composed and logged, but not actually delivered
 }
 
 const db: DB = globalForStore.__aeraStore ?? (globalForStore.__aeraStore = seed());
@@ -124,7 +154,33 @@ function shortlistVendors(req: Requirement): { shortlisted: string[]; funnel: st
   return { shortlisted: pool.map((v) => v.id), funnel };
 }
 
-export function confirmRequirement(id: string, action: "send" | "draft") {
+function rfxMessageText(req: Requirement): string {
+  return (
+    `New RFx from ${db.buyer.name} via Aerchain\n\n` +
+    `${req.code}: ${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}\n` +
+    (req.qty && req.uom ? `Quantity: ${req.qty} ${req.uom}\n` : "") +
+    `Deliver to: ${req.siteAddress}\n` +
+    `Needed by: ${req.deliveryDate}\n\n` +
+    `Please reply with your rate, payment terms, transport (included/excluded), and delivery date. ` +
+    `Any format is fine — plain text, a pasted rate card, or a photo.`
+  );
+}
+
+function logDispatch(entry: Omit<DispatchLogEntry, "id" | "sentAt">) {
+  db.dispatchLog.push({ ...entry, id: uid("dispatch"), sentAt: new Date().toISOString() });
+}
+
+export function getDispatchLog(requirementId: string): DispatchLogEntry[] {
+  return db.dispatchLog.filter((d) => d.requirementId === requirementId);
+}
+
+export function repliedCount(req: Requirement): { replied: number; total: number; remaining: number } {
+  const replied = new Set(req.offers.map((o) => o.vendorId)).size;
+  const total = req.shortlistedVendorIds.length;
+  return { replied, total, remaining: Math.max(0, total - replied) };
+}
+
+export async function confirmRequirement(id: string, action: "send" | "draft") {
   const req = db.requirements.get(id);
   if (!req) throw new Error("not_found");
   if (action === "draft") {
@@ -136,6 +192,38 @@ export function confirmRequirement(id: string, action: "send" | "draft") {
   const updated: Requirement = { ...req, status: "sent_to_vendor", shortlistedVendorIds: shortlisted };
   db.requirements.set(id, updated);
   audit(id, "system", "dispatched", `Sent to vendors: ${shortlisted.join(", ") || "none matched"}`);
+
+  // Every shortlisted vendor gets contacted on BOTH channels in parallel — this is the "quote
+  // sent, waiting for rates" moment the buyer sees on screen.
+  for (const vendorId of shortlisted) {
+    const vendor = VENDORS.find((v) => v.id === vendorId);
+    if (!vendor) continue;
+    const body = rfxMessageText(updated);
+
+    // Email — real send once personal Gmail is connected; logged either way.
+    const delivered = await sendEmail(vendor.email, body);
+    logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
+    audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
+
+    // Telegram — real send if this vendor's chat (or the shared linked chat) is already known.
+    if (tg.isConfigured()) {
+      const chatId = db.vendorChats.get(vendorId) ?? db.linkedChatId;
+      if (chatId) {
+        db.vendorChats.set(vendorId, chatId);
+        db.chatContext.set(chatId, { requirementId: id, vendorId });
+        try {
+          await tg.sendMessage(chatId, `=== Quote request for ${vendor.name} ===\n\n${body}`);
+          logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: true });
+          audit(id, "system", "telegram_sent", `Message sent to ${vendor.name} (${vendor.telegramPhone})`);
+        } catch (err) {
+          logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
+          audit(id, "system", "telegram_send_failed", `${vendorId}: ${(err as Error).message}`);
+        }
+      } else {
+        logDispatch({ requirementId: id, vendorId, channel: "telegram", to: vendor.telegramPhone, message: body, delivered: false });
+      }
+    }
+  }
   return updated;
 }
 
@@ -146,7 +234,7 @@ export function listOffers(id: string) {
   return { offers: req.offers, ranking, vendors: VENDORS };
 }
 
-export function submitVendorReply(requirementId: string, vendorId: string, rawText: string) {
+export function submitVendorReply(requirementId: string, vendorId: string, rawText: string, channelOverride?: ReplyChannel) {
   const req = db.requirements.get(requirementId);
   if (!req) throw new Error("not_found");
   const extraction = extractOffer(rawText);
@@ -157,7 +245,7 @@ export function submitVendorReply(requirementId: string, vendorId: string, rawTe
     vendorId,
     requirementId,
     rawSource: rawText,
-    replyChannel: vendor?.replyChannel ?? "email",
+    replyChannel: channelOverride ?? vendor?.replyChannel ?? "email",
     sourceFormat: format,
     rate: extraction.rate,
     rateBasis: extraction.rateBasis,
@@ -177,11 +265,14 @@ export function submitVendorReply(requirementId: string, vendorId: string, rawTe
   db.requirements.set(requirementId, updated);
   audit(requirementId, "system", "offer_received", `${vendor?.name ?? vendorId} via ${offer.replyChannel} (${format}), confidence ${offer.extractionConfidence}`);
 
+  const { replied, total, remaining } = repliedCount(updated);
   const notif: Notification = {
     id: uid("notif"),
     requirementId,
     text: wasFirst ? "Vendor rates have arrived, choose one" : "Another vendor rate came in",
-    meta: `${req.code} · ${req.itemName ?? req.itemCategory} · ${updated.offers.length} rate(s) in`,
+    meta:
+      `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
+      (remaining > 0 ? ` · ${remaining} remaining` : " · all in"),
     read: false,
     createdAt: new Date().toISOString(),
   };
@@ -246,4 +337,99 @@ export function updateProfile(patch: Partial<Buyer>) {
 
 export function getVendors() {
   return VENDORS;
+}
+
+export async function getBotUsername(): Promise<string | null> {
+  if (!tg.isConfigured()) return null;
+  if (db.botUsername) return db.botUsername;
+  try {
+    const me = await tg.getMe();
+    db.botUsername = me.username;
+    return me.username;
+  } catch {
+    return null;
+  }
+}
+
+export function getVendorLinkToken(vendorId: string, requirementId: string): string {
+  return `${vendorId}_${requirementId}`;
+}
+
+export function isVendorLinked(vendorId: string): boolean {
+  return db.vendorChats.has(vendorId);
+}
+
+// Handles both the long-poll loop (local dev) and the webhook route (deployed) — same logic,
+// same effect: a real vendor reply flows into the exact same extraction pipeline as the
+// in-app "reply as vendor" panel.
+export async function handleTelegramUpdate(update: tg.TgUpdate) {
+  const msg = update.message;
+  if (!msg) return;
+  const chatId = String(msg.chat.id);
+  const text = msg.text ?? "";
+
+  if (text.startsWith("/start")) {
+    const payload = text.slice(6).trim();
+    const sep = payload.indexOf("_");
+    if (sep === -1) {
+      await tg.sendMessage(chatId, "This link doesn't look right — ask your buyer to resend it.");
+      return;
+    }
+    const vendorId = payload.slice(0, sep);
+    const requirementId = payload.slice(sep + 1);
+    const req = db.requirements.get(requirementId);
+    const vendor = VENDORS.find((v) => v.id === vendorId);
+    if (!req || !vendor) {
+      await tg.sendMessage(chatId, "This requirement no longer exists.");
+      return;
+    }
+    db.vendorChats.set(vendorId, chatId);
+    db.chatContext.set(chatId, { requirementId, vendorId });
+    db.linkedChatId = chatId; // this real chat now stands in for every dummy vendor
+    audit(requirementId, "system", "vendor_telegram_linked", `${vendor.name} linked chat ${chatId}`);
+    await tg.sendMessage(chatId, `Hi, this is Aera on behalf of ${db.buyer.name}.\n\n${rfxMessageText(req)}`);
+    return;
+  }
+
+  // Since every dummy vendor shares one real chat, a reply can start with "V2:" to say which
+  // vendor it's answering for; otherwise it's assumed to answer whichever vendor was dispatched
+  // to most recently in this chat.
+  let context = db.chatContext.get(chatId);
+  const prefixMatch = text.match(/^(V\d+)[:\-.,]?\s*/i);
+  if (prefixMatch) {
+    const vendorId = prefixMatch[1].toUpperCase();
+    const pendingReqId = findPendingRequirementForVendor(vendorId);
+    if (pendingReqId) {
+      context = { requirementId: pendingReqId, vendorId };
+      db.chatContext.set(chatId, context);
+    }
+  }
+  if (!context) {
+    await tg.sendMessage(chatId, "I don't have an open request for this chat. Ask your buyer to resend the link.");
+    return;
+  }
+
+  let rawText = (prefixMatch ? text.slice(prefixMatch[0].length) : text) || msg.caption || "";
+  if (!rawText && (msg.photo || msg.document)) {
+    rawText = "[Photo/file received, no caption text provided]";
+  }
+  if (!rawText) return;
+
+  const { requirement } = submitVendorReply(context.requirementId, context.vendorId, rawText, "telegram");
+  const vendor = VENDORS.find((v) => v.id === context.vendorId);
+  const { remaining } = repliedCount(requirement);
+  await tg.sendMessage(
+    chatId,
+    `Got it — thanks. Your quote for ${requirement.code} has been recorded.` +
+      (remaining > 0 ? ` Still waiting on ${remaining} other vendor(s).` : "")
+  );
+  audit(context.requirementId, "system", "telegram_reply_received", `${vendor?.name ?? context.vendorId}: "${rawText.slice(0, 120)}"`);
+}
+
+function findPendingRequirementForVendor(vendorId: string): string | null {
+  const candidates = Array.from(db.requirements.values())
+    .filter((r) => (r.status === "sent_to_vendor" || r.status === "rate_received") && r.shortlistedVendorIds.includes(vendorId))
+    .filter((r) => !r.offers.some((o) => o.vendorId === vendorId))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return candidates[0]?.id ?? null;
 }

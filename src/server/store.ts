@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db";
 import { extractOffer, detectFormat, rankOffers, recognizeImageText, extractTextFromDocument } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
 import * as tg from "@/lib/telegram";
+import * as gmail from "@/lib/gmail";
 import {
   AuditEntry,
   Buyer,
@@ -149,10 +150,10 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 // platform anti-spam rule, not something we can configure around), so the initial contact has
 // to arrive over a channel a bot CAN push to unprompted — email. The email carries the same RFx
 // text as the Telegram dispatch, plus that vendor's personal "start the bot" link.
-async function sendEmail(to: string, subject: string, body: string): Promise<boolean> {
+async function sendEmail(to: string, subject: string, body: string, replyTo?: string): Promise<boolean> {
   if (!resend) return false; // no RESEND_API_KEY configured — composed and logged, not delivered
   try {
-    await resend.emails.send({ from: "Aera <onboarding@resend.dev>", to, subject, text: body });
+    await resend.emails.send({ from: "Aera <onboarding@resend.dev>", to, subject, text: body, ...(replyTo ? { replyTo } : {}) });
     return true;
   } catch (err) {
     console.error("email send failed", err);
@@ -318,7 +319,8 @@ function rfxMessageText(req: Requirement, buyerName: string, telegramLink?: stri
     `Deliver to: ${req.siteAddress}\n` +
     `Needed by: ${req.deliveryDate}\n\n` +
     `Please reply with your rate, payment terms, transport (included/excluded), and delivery date. ` +
-    `Any format is fine — plain text, a pasted rate card, or a photo.` +
+    `Any format is fine — plain text, a pasted rate card, a PDF/Excel/Word file, or a photo. You can ` +
+    `reply directly to this email, too.` +
     (telegramLink
       ? `\n\nFastest way to reply: open this link and send your quote on Telegram — ${telegramLink}`
       : "")
@@ -384,7 +386,8 @@ export async function confirmRequirement(id: string, action: "send" | "draft") {
     const telegramLink = !chatId && botUsername ? tg.botDeepLink(botUsername, getVendorLinkToken(vendorId, id)) : null;
     const body = rfxMessageText(updated, buyer?.name ?? "the buyer", telegramLink);
 
-    const delivered = await sendEmail(vendor.email, `New RFx: ${updated.code} — ${updated.itemName ?? updated.itemCategory}`, body);
+    const replyTo = gmail.isConfigured() ? gmail.replyToAddress(vendorId, id) : undefined;
+    const delivered = await sendEmail(vendor.email, `New RFx: ${updated.code} — ${updated.itemName ?? updated.itemCategory}`, body, replyTo);
     await logDispatch({ requirementId: id, vendorId, channel: "email", to: vendor.email, message: body, delivered });
     await audit(id, "system", delivered ? "email_sent" : "email_logged_not_sent", `To ${vendor.email} for ${vendor.name}`);
 
@@ -665,4 +668,43 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
       (remaining > 0 ? ` Still waiting on ${remaining} other vendor(s).` : "")
   );
   await audit(link.requirementId, "system", "telegram_reply_received", `${vendor?.name ?? link.vendorId}: "${rawText.slice(0, 120)}"`);
+}
+
+// Polled from the client (piggybacking on the existing notification-poll interval) rather than
+// pushed via webhook — there's no domain here for Gmail/Resend to push inbound mail to, so we
+// pull instead. Only scans the buyer's own unread mail for the "+vendorId_requirementId" alias
+// tag (see lib/gmail.ts); anything else in the inbox is left completely alone.
+export async function checkInboundEmail(): Promise<{ processed: number }> {
+  if (!gmail.isConfigured()) return { processed: 0 };
+  const emails = await gmail.listInboundReplies();
+  let processed = 0;
+  for (const email of emails) {
+    let rawText = email.text;
+    const attachment = email.attachments[0]; // first attachment only, same simplification as Telegram
+    if (!rawText.trim() && attachment) {
+      try {
+        const buffer = await gmail.downloadAttachment(email.gmailId, attachment.attachmentId);
+        const docText = attachment.mimeType.startsWith("image/")
+          ? await recognizeImageText(buffer)
+          : await extractTextFromDocument(buffer, attachment.mimeType, attachment.filename);
+        rawText = docText
+          ? `[Extracted from ${attachment.filename}]\n${docText}`
+          : `[Received ${attachment.filename}, no readable text found]`;
+      } catch (err) {
+        console.error("email attachment extraction failed", err);
+        rawText = `[Received ${attachment.filename}, could not be read]`;
+      }
+    }
+    if (rawText.trim()) {
+      try {
+        await submitVendorReply(email.requirementId, email.vendorId, rawText, "email");
+        await audit(email.requirementId, "system", "email_reply_received", `${email.from}: "${rawText.slice(0, 120)}"`);
+        processed++;
+      } catch (err) {
+        console.error("failed to process inbound email", email.gmailId, err);
+      }
+    }
+    await gmail.markRead(email.gmailId).catch((err) => console.error("failed to mark email read", email.gmailId, err));
+  }
+  return { processed };
 }

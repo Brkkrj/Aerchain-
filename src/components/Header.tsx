@@ -59,6 +59,23 @@ export default function Header() {
     return () => clearInterval(t);
   }, []);
 
+  // There's no domain here for Gmail to push inbound vendor replies to, so we pull instead —
+  // piggybacking on this component's existing poll cadence rather than adding a cron job. A
+  // longer interval than the notification poll since email replies aren't as time-sensitive as
+  // Telegram, and it's a no-op instantly if Gmail OAuth isn't configured.
+  useEffect(() => {
+    const check = () =>
+      api
+        .checkEmail()
+        .then((r) => {
+          if (r.processed > 0) poll();
+        })
+        .catch(() => {});
+    check();
+    const t = setInterval(check, 20000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);

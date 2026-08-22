@@ -59,6 +59,7 @@ export const api = {
       body: JSON.stringify({ requirementId, vendorId, text }),
     }),
   getNotifications: () => jsonFetch<{ notifications: Notification[] }>("/api/notifications"),
+  checkEmail: () => jsonFetch<{ processed: number }>("/api/check-email"),
   markNotificationRead: (id: string) => jsonFetch<{ notifications: Notification[] }>(`/api/notifications/${id}/read`, { method: "POST" }),
   getProfile: () => jsonFetch<{ profile: Buyer }>("/api/profile"),
   updateProfile: (patch: Partial<Buyer>) => jsonFetch<{ profile: Buyer }>("/api/profile", { method: "PATCH", body: JSON.stringify(patch) }),

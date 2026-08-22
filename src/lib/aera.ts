@@ -92,13 +92,20 @@ function findAddress(text: string): string | null {
 }
 
 function findPaymentTerms(text: string): string | null {
+  // Only extend past the initial "N% advance" clause when what follows is clearly a genuine
+  // continuation of the SAME payment term (a balance/second-installment split) — otherwise a
+  // comma just starts the next unrelated clause in the sentence.
   const m =
-    text.match(/(\d{1,3}%\s*(?:advance|adv)[^.]{0,40})/i) ||
+    text.match(/(\d{1,3}%\s*(?:advance|adv)(?:\s*[+,]\s*(?:(?:balance|remaining|bal)|\d{1,3}%)[^.,]{0,40})?)/i) ||
     text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
     text.match(/(cash on delivery|cod)/i) ||
     text.match(/(net\s*\d{1,3})/i) ||
     text.match(/(full advance|100%\s*advance|advance payment)/i);
-  return m ? m[1].trim() : null;
+  if (!m) return null;
+  // The greedy "advance" pattern can run on past its own clause into an unrelated one in the
+  // same sentence (e.g. "50% advance, transport should be included") — trim that off rather
+  // than let it leak a duplicate mention into buildSummary's own transport line.
+  return m[1].replace(/,?\s*(?:transport|xport)\b.*$/i, "").trim();
 }
 
 function findTransport(text: string): boolean | null {
@@ -176,16 +183,21 @@ export function formatDate(iso: string | null): string {
   return `${Number(d)} ${months[Number(m) - 1]} ${y}`;
 }
 
+// Written the way a buyer would jot the requirement down themselves, not as a stacked readout
+// of every field with its own label — one flowing sentence, extras folded in after a dash.
 export function buildSummary(req: Requirement): string {
-  const parts: string[] = [];
-  parts.push(`You want ${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}`);
-  if (req.qty && req.uom) parts.push(`, ${req.qty} ${req.uom}`);
-  if (req.siteAddress) parts.push(` delivered to ${req.siteAddress}`);
-  if (req.deliveryDate) parts.push(`, by ${formatDate(req.deliveryDate)}`);
-  if (req.transportIncluded === true) parts.push(". Transport should be included");
-  if (req.paymentTerms) parts.push(`. Payment terms: ${req.paymentTerms}`);
-  if (req.siteCoordinator) parts.push(`. Site coordinator: ${req.siteCoordinator}`);
-  return parts.join("") + ".";
+  const head = `${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}`;
+  const qty = req.qty && req.uom ? `, ${req.qty} ${req.uom}` : "";
+  const address = req.siteAddress ? ` to ${req.siteAddress}` : "";
+  const date = req.deliveryDate ? ` by ${formatDate(req.deliveryDate)}` : "";
+
+  const extras: string[] = [];
+  if (req.transportIncluded === true) extras.push("transport included");
+  if (req.paymentTerms) extras.push(`${req.paymentTerms} payment`);
+  if (req.siteCoordinator) extras.push(`site coordinator ${req.siteCoordinator}`);
+  const tail = extras.length ? ` — ${extras.join(", ")}.` : ".";
+
+  return `${head}${qty}, delivered${address}${date}${tail}`;
 }
 
 export interface DraftTurnResult {

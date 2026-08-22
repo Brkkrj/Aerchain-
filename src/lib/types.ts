@@ -6,7 +6,7 @@ export type RequirementStatus =
   | "cancelled";
 
 export type ReplyChannel = "email" | "telegram";
-export type SourceFormat = "pdf" | "excel" | "image" | "plain_text";
+export type SourceFormat = "pdf" | "word" | "excel" | "image" | "plain_text";
 
 export interface Vendor {
   id: string;

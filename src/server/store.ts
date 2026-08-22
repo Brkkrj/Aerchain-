@@ -5,7 +5,7 @@
 // is genuine: actual DB writes, actual extraction parsing, an actual audit trail.
 import { Resend } from "resend";
 import { prisma } from "@/lib/db";
-import { extractOffer, detectFormat, rankOffers, recognizeImageText } from "@/lib/extraction";
+import { extractOffer, detectFormat, rankOffers, recognizeImageText, extractTextFromDocument } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
 import * as tg from "@/lib/telegram";
 import {
@@ -642,7 +642,17 @@ export async function handleTelegramUpdate(update: tg.TgUpdate) {
       rawText = "[Photo received, could not be read]";
     }
   } else if (!rawText && msg.document) {
-    rawText = "[Document received, no caption text provided]";
+    const fileLabel = msg.document.file_name ?? "attached file";
+    try {
+      const buffer = await tg.downloadFile(msg.document.file_id);
+      const docText = await extractTextFromDocument(buffer, msg.document.mime_type ?? "", msg.document.file_name);
+      rawText = docText
+        ? `[Extracted from ${fileLabel}]\n${docText}`
+        : `[Received ${fileLabel}, no readable text found — likely a scanned/image-only file]`;
+    } catch (err) {
+      console.error("document extraction pipeline failed", err);
+      rawText = `[Received ${fileLabel}, could not be read]`;
+    }
   }
   if (!rawText) return;
 

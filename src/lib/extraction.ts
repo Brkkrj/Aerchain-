@@ -32,13 +32,21 @@ function findRate(text: string): number | null {
 }
 
 function findPaymentTerms(text: string): string | null {
+  // Only extend past the initial "N% advance" clause when what follows is clearly a genuine
+  // continuation of the SAME payment term (a balance/remaining split) — otherwise a comma is
+  // just the next unrelated field, whether that's prose ("...advance, transport included") or a
+  // CSV/table cell boundary ("...Advance,Included,29 Aug 2026,...").
   const m =
-    text.match(/(\d{1,3}%\s*(?:advance|adv)[^\n.]{0,60})/i) ||
+    text.match(/(\d{1,3}%\s*(?:advance|adv)(?:\s*[+,]\s*(?:(?:balance|remaining|bal)|\d{1,3}%)[^\n,.]{0,40})?)/i) ||
     text.match(/(100%\s*after\s*\d+\s*days?)/i) ||
     text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
     text.match(/(cash on delivery|cod)/i) ||
     text.match(/(net\s*\d{1,3})/i);
-  return m ? m[1].trim() : null;
+  if (!m) return null;
+  // The greedy "advance" pattern can run on past its own clause into an unrelated one in the
+  // same reply (e.g. "50% advance, transport included") — trim that off so it isn't duplicated
+  // against the separately-extracted transportIncluded field.
+  return m[1].replace(/,?\s*(?:transport|xport)\b.*$/i, "").trim();
 }
 
 function findTransport(text: string): boolean | null {
@@ -118,10 +126,45 @@ export function extractOffer(rawText: string): ExtractionResult {
 }
 
 export function detectFormat(rawText: string): SourceFormat {
-  if (/quotation|authoris|authoriz/i.test(rawText)) return "pdf";
-  if (/\|/.test(rawText)) return "excel";
-  if (/handwritten|photo|\[ocr/i.test(rawText)) return "image";
+  if (/\[ocr of photographed|handwritten|photo/i.test(rawText)) return "image";
+  if (/\[extracted from .*\.(xlsx|xls|csv)\]/i.test(rawText) || /\|/.test(rawText)) return "excel";
+  if (/\[extracted from .*\.docx?\]/i.test(rawText)) return "word";
+  if (/\[extracted from .*\.pdf\]/i.test(rawText) || /quotation|authoris|authoriz/i.test(rawText)) return "pdf";
   return "plain_text";
+}
+
+// Real (non-scanned) PDF/Word/Excel attachments a vendor sends as a Telegram document — reads
+// actual file content, not just a filename stub. A scanned/image-only PDF has no extractable
+// text layer; that case falls through to null and the caller flags it for manual review, same as
+// a photo OCR that finds nothing, rather than pretending to have read it.
+export async function extractTextFromDocument(buffer: Buffer, mimeType: string, fileName?: string): Promise<string | null> {
+  const name = (fileName ?? "").toLowerCase();
+  try {
+    if (mimeType.includes("pdf") || name.endsWith(".pdf")) {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
+      await parser.destroy();
+      return result.text?.trim() || null;
+    }
+    if (mimeType.includes("wordprocessingml") || name.endsWith(".docx")) {
+      const mammoth = await import("mammoth");
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value?.trim() || null;
+    }
+    if (mimeType.includes("spreadsheetml") || mimeType.includes("ms-excel") || name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv")) {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(buffer, { type: "buffer" });
+      const text = wb.SheetNames.map((sheetName) => XLSX.utils.sheet_to_csv(wb.Sheets[sheetName])).join("\n\n");
+      return text.trim() || null;
+    }
+    if (mimeType.startsWith("image/")) {
+      return recognizeImageText(buffer);
+    }
+  } catch (err) {
+    console.error("document extraction failed", err);
+  }
+  return null;
 }
 
 // Offline OCR for photographed rate cards — the closest thing to real "read a photo" capability

@@ -18,6 +18,11 @@ const DATE_RANGES: { value: "all" | "7" | "30" | "90"; label: string }[] = [
 ];
 const PAGE_SIZE = 10;
 
+function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  return `${formatDate(iso.slice(0, 10))}, ${date.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true })}`;
+}
+
 function vendorSummary(r: Requirement, vendorNameById: Record<string, string>): string {
   if (r.status === "closed_deal" && r.winningOfferId) {
     const offer = r.offers.find((o) => o.id === r.winningOfferId);
@@ -191,7 +196,7 @@ export default function HomePage() {
                 }}
               >
                 <span style={{ fontWeight: 600 }}>{r.code}</span>
-                <span style={{ color: "var(--text-secondary)" }}>{formatDate(r.createdAt.slice(0, 10))}</span>
+                <span style={{ color: "var(--text-secondary)" }}>{formatDateTime(r.createdAt)}</span>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <span>{r.itemName ?? "Not Sent Yet"}</span>
                   {(r.itemGrade || r.brandPreference) && (

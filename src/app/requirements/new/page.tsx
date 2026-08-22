@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { Shell } from "@/components/ui";
+import { SecondaryButton, Shell } from "@/components/ui";
 import { api } from "@/lib/api";
 
 interface ChatMsg {
@@ -61,6 +61,11 @@ export default function NewRequirementPage() {
   return (
     <Shell>
       <Header />
+      <div style={{ padding: "16px 24px 0" }}>
+        <SecondaryButton onClick={() => router.push("/")} style={{ border: "none", padding: 0, height: "auto", background: "none" }}>
+          ← Requirements
+        </SecondaryButton>
+      </div>
       <div style={{ minHeight: "calc(100vh - 63px)", display: "flex", justifyContent: "center", padding: "0" }}>
         <div
           style={{

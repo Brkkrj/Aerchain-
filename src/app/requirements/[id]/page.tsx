@@ -54,9 +54,17 @@ export default function RequirementPage() {
   return (
     <Shell>
       <Header />
+      <div style={{ padding: "16px 24px 0", maxWidth: 1080, margin: "0 auto" }}>
+        <SecondaryButton
+          onClick={() => router.push("/")}
+          style={{ border: "none", padding: 0, height: "auto", background: "none" }}
+        >
+          ← Requirements
+        </SecondaryButton>
+      </div>
       {req.status === "draft" && !req.summaryText && <ChatContinue req={req} onDone={load} />}
       {req.status === "draft" && req.summaryText && <ConfirmScreen req={req} onDone={load} router={router} />}
-      {req.status === "sent_to_vendor" && <SentScreen req={req} vendors={vendors} onDone={load} />}
+      {req.status === "sent_to_vendor" && <SentScreen req={req} onDone={load} />}
       {req.status === "rate_received" && (
         <CompareScreen req={req} offers={offers} ranking={ranking} vendors={vendors} onDone={load} />
       )}
@@ -65,9 +73,6 @@ export default function RequirementPage() {
         <Container>
           <PageTitle>Requirement cancelled</PageTitle>
           <Subtitle>{req.code} was cancelled with no vendor selected.</Subtitle>
-          <div style={{ marginTop: 16 }}>
-            <SecondaryButton onClick={() => router.push("/")}>Back to requirements</SecondaryButton>
-          </div>
         </Container>
       )}
     </Shell>
@@ -78,7 +83,6 @@ function ChatContinue({ req, onDone }: { req: Requirement; onDone: () => void })
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState(req.messages);
   const [thinking, setThinking] = useState(false);
-  const router = useRouter();
 
   async function send() {
     if (!input.trim()) return;
@@ -115,9 +119,6 @@ function ChatContinue({ req, onDone }: { req: Requirement; onDone: () => void })
           <PrimaryButton onClick={send}>Send</PrimaryButton>
         </div>
       </Card>
-      <div style={{ marginTop: 16 }}>
-        <SecondaryButton onClick={() => router.push("/")}>Back to requirements</SecondaryButton>
-      </div>
     </Container>
   );
 }
@@ -181,7 +182,7 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
   );
 }
 
-function SentScreen({ req, vendors, onDone }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
+function SentScreen({ req }: { req: Requirement; onDone: () => void }) {
   const total = req.shortlistedVendorIds.length;
   const replied = new Set(req.offers.map((o) => o.vendorId)).size;
   const remaining = Math.max(0, total - replied);
@@ -196,63 +197,7 @@ function SentScreen({ req, vendors, onDone }: { req: Requirement; vendors: Vendo
         {replied} of {total} vendor{total === 1 ? "" : "s"} replied
         {remaining > 0 && <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}> · {remaining} remaining</span>}
       </div>
-      <div style={{ marginTop: 24, textAlign: "left" }}>
-        <VendorReplyPanel req={req} vendors={vendors} onDone={onDone} />
-      </div>
     </Container>
-  );
-}
-
-function VendorReplyPanel({ req, vendors }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
-  const shortlisted = vendors.filter((v) => req.shortlistedVendorIds.includes(v.id));
-  const repliedIds = new Set(req.offers.map((o) => o.vendorId));
-  const [tgLinks, setTgLinks] = useState<{ vendorId: string; linked: boolean; link: string | null }[]>([]);
-
-  useEffect(() => {
-    api.getTelegramLinks(req.id).then(({ links }) => {
-      setTgLinks(links);
-    });
-  }, [req.id, req.offers.length]);
-
-  return (
-    <Card style={{ padding: 20 }}>
-      <div style={{ font: "600 16px/1.3 var(--font-inter), sans-serif", marginBottom: 4 }}>Vendor replies</div>
-      <div style={{ font: "400 13px/1.5 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginBottom: 16 }}>
-        Vendors reply to Aera on Telegram, in any format — a message, a pasted rate card, or a photo. Replies land here
-        automatically as they come in.
-      </div>
-      {shortlisted.length === 0 && <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>No vendors matched this requirement.</div>}
-      {shortlisted.map((v) => {
-        const replied = repliedIds.has(v.id);
-        const tgInfo = tgLinks.find((l) => l.vendorId === v.id);
-        return (
-          <div key={v.id} style={{ borderTop: "1px solid #EFEFED", padding: "12px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <div style={{ fontSize: 14 }}>
-                <strong>{v.name}</strong>{" "}
-                <span style={{ color: "var(--text-secondary)" }}>
-                  · via Telegram
-                  {tgInfo?.linked && !replied ? " (linked, waiting for reply)" : ""}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {tgInfo?.link && !replied && (
-                  <a
-                    href={tgInfo.link}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ background: "var(--white)", color: "var(--charcoal)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 14px", font: "600 13px/1 var(--font-inter), sans-serif", textDecoration: "none" }}
-                  >
-                    Open in Telegram
-                  </a>
-                )}
-                {replied && <StatusPill status="rate_received" />}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </Card>
   );
 }
 

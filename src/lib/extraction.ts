@@ -21,12 +21,15 @@ export interface ExtractionResult {
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 function findRate(text: string): number | null {
-  const withCurrency = text.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)/i);
+  // (?<![a-z]) stops "rs" from matching inside an unrelated word like "Bars" or "years"; the
+  // number group must start with an actual digit so a bare trailing comma can't be captured as
+  // "the number" (Number("") === 0, which silently looked like a real zero rate).
+  const withCurrency = text.match(/(?<![a-z])(?:rs\.?|inr|₹)\s*(\d[\d,]*(?:\.\d+)?)/i);
   if (withCurrency) return Number(withCurrency[1].replace(/,/g, ""));
   // currency word AFTER the number — "50 rupees", "120 rs", "200/-"
-  const trailingCurrency = text.match(/([\d,]+(?:\.\d+)?)\s*(?:rupees?|rs\.?|inr|\/-)\b/i);
+  const trailingCurrency = text.match(/(\d[\d,]*(?:\.\d+)?)\s*(?:rupees?|rs\.?|inr|\/-)\b/i);
   if (trailingCurrency) return Number(trailingCurrency[1].replace(/,/g, ""));
-  const withLabel = text.match(/rate[:\-]?\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)?\s*(?:uom|unit)?/i);
+  const withLabel = text.match(/rate[:\-]?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:\/|per)?\s*(?:uom|unit)?/i);
   if (withLabel) return Number(withLabel[1].replace(/,/g, ""));
   return null;
 }

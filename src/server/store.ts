@@ -5,10 +5,11 @@
 // is genuine: actual DB writes, actual extraction parsing, an actual audit trail.
 import { Resend } from "resend";
 import { prisma } from "@/lib/db";
-import { extractOffer, detectFormat, rankOffers, extractTextFromDocument } from "@/lib/extraction";
+import { extractOffer, detectFormat, rankOffers, extractTextFromDocument, ExtractionResult } from "@/lib/extraction";
 import { draftTurn, buildSummary } from "@/lib/aera";
 import * as tg from "@/lib/telegram";
 import * as gmail from "@/lib/gmail";
+import * as gemini from "@/lib/gemini";
 import {
   AuditEntry,
   Buyer,
@@ -424,13 +425,19 @@ export async function listOffers(id: string) {
   return { offers, ranking, vendors: vendorRows.map(mapVendor) };
 }
 
-export async function submitVendorReply(requirementId: string, vendorId: string, rawText: string, channelOverride?: ReplyChannel) {
+export async function submitVendorReply(
+  requirementId: string,
+  vendorId: string,
+  rawText: string,
+  channelOverride?: ReplyChannel,
+  preExtracted?: { extraction: ExtractionResult; format: Offer["sourceFormat"] }
+) {
   const row = await getRequirementRow(requirementId);
   if (!row) throw new Error("not_found");
   const req = mapRequirement(row);
   const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
-  const extraction = extractOffer(rawText);
-  const format = detectFormat(rawText);
+  const extraction = preExtracted?.extraction ?? extractOffer(rawText);
+  const format = preExtracted?.format ?? detectFormat(rawText);
 
   const offerRow = await prisma.offer.create({
     data: {
@@ -701,31 +708,68 @@ export async function checkInboundEmail(): Promise<{ processed: number }> {
   const emails = await gmail.listInboundReplies();
   let processed = 0;
   for (const email of emails) {
-    let rawText = cleanEmailBody(email.text);
-    // Every attachment gets processed, not just when there's no other text — a vendor might send
-    // a short note AND a rate-card photo, or several files at once.
-    for (const attachment of email.attachments) {
-      // Photos/scanned images aren't readable (no OCR/vision available) — text, PDF, Excel, and
-      // Word all work fine, so only skip the image case rather than every attachment.
-      if (attachment.mimeType.startsWith("image/")) {
-        rawText += `\n[Image attachment "${attachment.filename}" received — photos aren't supported yet; please resend the quote as text or a PDF/Excel/Word file]`;
-        continue;
+    const cleanedText = cleanEmailBody(email.text);
+    let rawText = "";
+    let preExtracted: { extraction: ExtractionResult; format: Offer["sourceFormat"] } | undefined;
+
+    // Only worth invoking Gemini when there's an actual PDF/image for it to read — routing a
+    // text-only reply (or one with just an Excel/Word attachment, which xlsx/mammoth already
+    // parse reliably) through it left it with nothing real to work from, and instead of saying
+    // so, it fabricated a plausible-looking but entirely fake quotation. Never let that happen
+    // again: only call it when there's real visual content backing the extraction.
+    const hasVisualAttachment = email.attachments.some((a) => a.mimeType.startsWith("image/") || a.mimeType.includes("pdf"));
+    if (gemini.isConfigured() && hasVisualAttachment) {
+      // One multimodal call reads the body text and every attachment together (rate card, PDF,
+      // photo, whatever) and returns structured fields directly — this is the robust path,
+      // replacing regex-on-extracted-text for email specifically.
+      const downloaded: { buffer: Buffer; mimeType: string; filename: string }[] = [];
+      for (const attachment of email.attachments) {
+        try {
+          const buffer = await gmail.downloadAttachment(email.gmailId, attachment.attachmentId);
+          downloaded.push({ buffer, mimeType: attachment.mimeType, filename: attachment.filename });
+        } catch (err) {
+          console.error("failed to download attachment for gemini", attachment.filename, err);
+        }
       }
-      try {
-        const buffer = await gmail.downloadAttachment(email.gmailId, attachment.attachmentId);
-        const docText = await extractTextFromDocument(buffer, attachment.mimeType, attachment.filename);
-        rawText += docText
-          ? `\n[Extracted from ${attachment.filename}]\n${docText}`
-          : `\n[Received ${attachment.filename}, no readable text found]`;
-      } catch (err) {
-        console.error("email attachment extraction failed", err);
-        rawText += `\n[Received ${attachment.filename}, could not be read]`;
+      const result = await gemini.extractOfferFromEmail(cleanedText, downloaded);
+      if (result) {
+        rawText = result.transcription || cleanedText;
+        const format: Offer["sourceFormat"] = downloaded.some((d) => d.mimeType.startsWith("image/"))
+          ? "image"
+          : downloaded.some((d) => d.mimeType.includes("pdf"))
+            ? "pdf"
+            : detectFormat(rawText);
+        preExtracted = { extraction: result.extraction, format };
       }
     }
-    rawText = rawText.trim();
+
+    if (!preExtracted) {
+      // Fallback: no Gemini configured, no attachments, or the call failed — regex on whatever
+      // text/documents we can parse ourselves (text, PDF, Excel, Word; images are flagged, not
+      // silently dropped).
+      rawText = cleanedText;
+      for (const attachment of email.attachments) {
+        if (attachment.mimeType.startsWith("image/")) {
+          rawText += `\n[Image attachment "${attachment.filename}" received — photos aren't supported without Gemini configured; please resend the quote as text or a PDF/Excel/Word file]`;
+          continue;
+        }
+        try {
+          const buffer = await gmail.downloadAttachment(email.gmailId, attachment.attachmentId);
+          const docText = await extractTextFromDocument(buffer, attachment.mimeType, attachment.filename);
+          rawText += docText
+            ? `\n[Extracted from ${attachment.filename}]\n${docText}`
+            : `\n[Received ${attachment.filename}, no readable text found]`;
+        } catch (err) {
+          console.error("email attachment extraction failed", err);
+          rawText += `\n[Received ${attachment.filename}, could not be read]`;
+        }
+      }
+      rawText = rawText.trim();
+    }
+
     if (rawText) {
       try {
-        await submitVendorReply(email.requirementId, email.vendorId, rawText, "email");
+        await submitVendorReply(email.requirementId, email.vendorId, rawText, "email", preExtracted);
         await audit(email.requirementId, "system", "email_reply_received", `${email.from}: "${rawText.slice(0, 120)}"`);
         processed++;
       } catch (err) {

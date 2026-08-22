@@ -6,7 +6,6 @@ import { Card, Container, PageTitle, PrimaryButton, SecondaryButton, Shell, Stat
 import { api } from "@/lib/api";
 import { Offer, Requirement, Vendor } from "@/lib/types";
 import { formatDate } from "@/lib/aera";
-import { VENDOR_REPLY_FIXTURES } from "@/lib/data";
 
 export default function RequirementPage() {
   const { id } = useParams<{ id: string }>();
@@ -204,39 +203,23 @@ function SentScreen({ req, vendors, onDone }: { req: Requirement; vendors: Vendo
   );
 }
 
-function VendorReplyPanel({ req, vendors, onDone }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
+function VendorReplyPanel({ req, vendors }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
   const shortlisted = vendors.filter((v) => req.shortlistedVendorIds.includes(v.id));
   const repliedIds = new Set(req.offers.map((o) => o.vendorId));
-  const [openVendor, setOpenVendor] = useState<string | null>(null);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
   const [tgLinks, setTgLinks] = useState<{ vendorId: string; linked: boolean; link: string | null }[]>([]);
-  const [tgConfigured, setTgConfigured] = useState(false);
 
   useEffect(() => {
-    api.getTelegramLinks(req.id).then(({ configured, links }) => {
-      setTgConfigured(configured);
+    api.getTelegramLinks(req.id).then(({ links }) => {
       setTgLinks(links);
     });
   }, [req.id, req.offers.length]);
-
-  async function submit(vendorId: string) {
-    if (!text.trim()) return;
-    setBusy(true);
-    await api.submitVendorReply(req.id, vendorId, text);
-    setBusy(false);
-    setText("");
-    setOpenVendor(null);
-    onDone();
-  }
 
   return (
     <Card style={{ padding: 20 }}>
       <div style={{ font: "600 16px/1.3 var(--font-inter), sans-serif", marginBottom: 4 }}>Vendor replies</div>
       <div style={{ font: "400 13px/1.5 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginBottom: 16 }}>
-        {tgConfigured
-          ? "Real replies on Telegram land here automatically. You can also submit a reply manually below for testing."
-          : "This is where a vendor's reply — over Telegram, or any format — lands and gets read automatically. Telegram isn't connected yet, so submit a reply manually below for this demo."}
+        Vendors reply to Aera on Telegram, in any format — a message, a pasted rate card, or a photo. Replies land here
+        automatically as they come in.
       </div>
       {shortlisted.length === 0 && <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>No vendors matched this requirement.</div>}
       {shortlisted.map((v) => {
@@ -248,7 +231,7 @@ function VendorReplyPanel({ req, vendors, onDone }: { req: Requirement; vendors:
               <div style={{ fontSize: 14 }}>
                 <strong>{v.name}</strong>{" "}
                 <span style={{ color: "var(--text-secondary)" }}>
-                  · via {v.replyChannel}
+                  · via Telegram
                   {tgInfo?.linked && !replied ? " (linked, waiting for reply)" : ""}
                 </span>
               </div>
@@ -263,35 +246,9 @@ function VendorReplyPanel({ req, vendors, onDone }: { req: Requirement; vendors:
                     Open in Telegram
                   </a>
                 )}
-                {replied ? (
-                  <StatusPill status="rate_received" />
-                ) : (
-                  <SecondaryButton onClick={() => setOpenVendor(openVendor === v.id ? null : v.id)} style={{ padding: "8px 14px", height: 36 }}>
-                    {openVendor === v.id ? "Close" : "Reply manually"}
-                  </SecondaryButton>
-                )}
+                {replied && <StatusPill status="rate_received" />}
               </div>
             </div>
-            {!replied && openVendor === v.id && (
-              <div style={{ marginTop: 10 }}>
-                <textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="Paste or type the vendor's reply — rate, terms, transport, delivery date…"
-                  style={{ width: "100%", minHeight: 90, border: "1px solid var(--border)", borderRadius: 10, padding: 12, font: "400 13px/1.5 var(--font-inter), sans-serif", outline: "none" }}
-                />
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <PrimaryButton onClick={() => submit(v.id)} disabled={busy} style={{ height: 36, padding: "0 16px" }}>
-                    Submit reply
-                  </PrimaryButton>
-                  {VENDOR_REPLY_FIXTURES[v.id] && (
-                    <SecondaryButton onClick={() => setText(VENDOR_REPLY_FIXTURES[v.id].text)} style={{ height: 36, padding: "0 16px" }}>
-                      Use sample reply
-                    </SecondaryButton>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         );
       })}

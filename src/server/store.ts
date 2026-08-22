@@ -266,10 +266,17 @@ export function submitVendorReply(requirementId: string, vendorId: string, rawTe
   audit(requirementId, "system", "offer_received", `${vendor?.name ?? vendorId} via ${offer.replyChannel} (${format}), confidence ${offer.extractionConfidence}`);
 
   const { replied, total, remaining } = repliedCount(updated);
+  const vendorName = vendor?.name ?? vendorId;
+  const text =
+    remaining === 0
+      ? `All ${total} vendor${total === 1 ? "" : "s"} have replied — compare rates now`
+      : wasFirst
+        ? `${vendorName}'s rate has arrived`
+        : `${vendorName}'s rate has arrived too`;
   const notif: Notification = {
     id: uid("notif"),
     requirementId,
-    text: wasFirst ? "Vendor rates have arrived, choose one" : "Another vendor rate came in",
+    text,
     meta:
       `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
       (remaining > 0 ? ` · ${remaining} remaining` : " · all in"),

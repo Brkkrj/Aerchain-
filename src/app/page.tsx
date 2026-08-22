@@ -29,6 +29,14 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, status, category, sort]);
 
+  // Vendor replies (and any status change) can land at any time via Telegram/email — poll so
+  // the list reflects them without the buyer needing to manually refresh or touch a filter.
+  useEffect(() => {
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, status, category, sort]);
+
   async function startNew() {
     router.push("/requirements/new");
   }

@@ -23,6 +23,9 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 function findRate(text: string): number | null {
   const withCurrency = text.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)/i);
   if (withCurrency) return Number(withCurrency[1].replace(/,/g, ""));
+  // currency word AFTER the number — "50 rupees", "120 rs", "200/-"
+  const trailingCurrency = text.match(/([\d,]+(?:\.\d+)?)\s*(?:rupees?|rs\.?|inr|\/-)\b/i);
+  if (trailingCurrency) return Number(trailingCurrency[1].replace(/,/g, ""));
   const withLabel = text.match(/rate[:\-]?\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)?\s*(?:uom|unit)?/i);
   if (withLabel) return Number(withLabel[1].replace(/,/g, ""));
   return null;

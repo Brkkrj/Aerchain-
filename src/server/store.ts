@@ -291,23 +291,36 @@ export async function patchRequirement(id: string, patch: Partial<Requirement> &
 
 const METRO_CITIES = ["Bangalore", "Mumbai", "Delhi", "Chennai", "Kolkata", "Ahmedabad", "Pune", "Hyderabad"];
 
+// Finds every vendor worth sending this RFx to, not just the narrowest exact match — city is a
+// preference to prioritize, not a hard filter, since zeroing out the shortlist entirely because
+// no vendor happens to sit in the exact delivery city would mean the buyer gets no quotes at all
+// even when other vendors clearly stock the material.
 function shortlistVendors(req: Requirement, allVendors: Vendor[]): { shortlisted: string[]; funnel: string[] } {
   const funnel: string[] = [];
-  let pool = allVendors.slice();
-  funnel.push(`${pool.length} vendors total`);
-  if (req.itemCategory) {
-    pool = pool.filter((v) => v.suppliesCategories.includes(req.itemCategory as string));
-    funnel.push(`${pool.length} stock ${req.itemCategory}`);
-  }
+  const byCategory = req.itemCategory
+    ? allVendors.filter((v) => v.suppliesCategories.includes(req.itemCategory as string))
+    : allVendors.slice();
+  funnel.push(`${byCategory.length} of ${allVendors.length} vendors stock ${req.itemCategory ?? "this item"}`);
+
   const addressLower = (req.siteAddress ?? "").toLowerCase();
   const city = METRO_CITIES.find((c) => addressLower.includes(c.toLowerCase())) ?? null;
-  if (city) {
-    pool = pool.filter((v) => v.serviceLocations.includes(city));
-    funnel.push(`${pool.length} deliver to ${city}`);
+  const localMatches = city ? byCategory.filter((v) => v.serviceLocations.includes(city)) : [];
+
+  let pool: Vendor[];
+  if (city && localMatches.length > 0) {
+    pool = localMatches;
+    funnel.push(`${localMatches.length} deliver to ${city} — shortlisted`);
+  } else {
+    pool = byCategory;
+    funnel.push(
+      city
+        ? `0 deliver to ${city} — broadened to all ${byCategory.length} category matches`
+        : `no city detected — all ${byCategory.length} category matches shortlisted`
+    );
   }
-  if (req.qty) {
-    pool = pool.filter((v) => v.capacityUomPerMonth >= Math.min(req.qty as number, v.capacityUomPerMonth));
-  }
+  // Best-first ordering (more deals closed = more reliable) even though the comparison screen's
+  // own ranking is what the buyer actually sees once quotes come in.
+  pool = [...pool].sort((a, b) => b.dealsLast30Days - a.dealsLast30Days);
   return { shortlisted: pool.map((v) => v.id), funnel };
 }
 

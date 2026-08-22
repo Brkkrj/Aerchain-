@@ -40,6 +40,7 @@ function findPaymentTerms(text: string): string | null {
     text.match(/(\d{1,3}%\s*(?:advance|adv)(?:\s*[+,]\s*(?:(?:balance|remaining|bal)|\d{1,3}%)[^\n,.]{0,40})?)/i) ||
     text.match(/(100%\s*after\s*\d+\s*days?)/i) ||
     text.match(/(\d{1,3}%\s*on\s*delivery)/i) ||
+    text.match(/(payment\s*within\s*\d+\s*days?(?:\s*of\s*delivery)?)/i) ||
     text.match(/(\d{1,3}\s*-\s*\d{1,3}\b(?:\s*split)?)/i) ||
     text.match(/(cash on delivery|cod)/i) ||
     text.match(/(net\s*\d{1,3})/i);
@@ -143,10 +144,19 @@ export async function extractTextFromDocument(buffer: Buffer, mimeType: string, 
   try {
     if (mimeType.includes("pdf") || name.endsWith(".pdf")) {
       const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      await parser.destroy();
-      return result.text?.trim() || null;
+      // pdf-parse's underlying pdfjs-dist/native-canvas init is flaky on a cold process — the
+      // exact same real (non-scanned) PDF intermittently comes back with empty text on the first
+      // attempt and succeeds on a second. Retrying once in the same invocation is cheap and
+      // fixes it, rather than the caller wrongly concluding the file has no text layer.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const parser = new PDFParse({ data: buffer });
+        const result = await parser.getText();
+        await parser.destroy();
+        const text = result.text?.trim();
+        if (text) return text;
+        if (attempt === 1) console.warn("pdf-parse returned empty text on first attempt, retrying");
+      }
+      return null;
     }
     if (mimeType.includes("wordprocessingml") || name.endsWith(".docx")) {
       const mammoth = await import("mammoth");

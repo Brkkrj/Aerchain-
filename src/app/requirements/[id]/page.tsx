@@ -251,7 +251,7 @@ function CompareScreen({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1.3fr .9fr .8fr 1.5fr .9fr .9fr 1.2fr 1.1fr 1fr",
+              gridTemplateColumns: "1.3fr .9fr 1.5fr .9fr .9fr 1.2fr 1.3fr 1fr",
               padding: "12px 14px",
               borderBottom: "1px solid var(--border)",
               font: "600 12px/1.3 var(--font-inter), sans-serif",
@@ -261,11 +261,10 @@ function CompareScreen({
           >
             <span>VENDOR</span>
             <span>RATE/UOM</span>
-            <span>BRAND</span>
             <span>PAYMENT TERMS</span>
             <span>DEALS (30D)</span>
             <span>TRANSPORT</span>
-            <span>CAPACITY/LEAD</span>
+            <span>CAPACITY/MONTH</span>
             <span>DELIVERY</span>
             <span></span>
           </div>
@@ -280,7 +279,7 @@ function CompareScreen({
                 key={o.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1.3fr .9fr .8fr 1.5fr .9fr .9fr 1.2fr 1.1fr 1fr",
+                  gridTemplateColumns: "1.3fr .9fr 1.5fr .9fr .9fr 1.2fr 1.3fr 1fr",
                   borderBottom: "1px solid #EFEFED",
                   background: selected === o.id ? "#FBFBFA" : "var(--white)",
                   alignItems: "center",
@@ -295,7 +294,6 @@ function CompareScreen({
                   )}
                 </div>
                 <div style={isBest ? cellBest : cell}>{o.rate != null ? `₹${o.rate}` : <Missing />}</div>
-                <div style={cell}>{o.brandOffered ?? <Missing />}</div>
                 <div style={cell}>{o.paymentTerms ?? <Missing />}</div>
                 <div style={cell}>{vendor?.dealsLast30Days ?? "—"}</div>
                 <div style={cell}>
@@ -307,8 +305,10 @@ function CompareScreen({
                     <span style={{ font: "500 13px/1 var(--font-inter), sans-serif", color: "var(--warning)", background: "var(--warning-bg)", border: "1px solid var(--warning-border)", padding: "5px 8px", borderRadius: 6 }}>Excluded</span>
                   )}
                 </div>
-                <div style={cell}>{o.capacityUom && o.capacityLeadDays ? `${o.capacityUom} uom in ${o.capacityLeadDays}d` : <Missing />}</div>
-                <div style={isEarliest ? cellBest : cell}>{o.deliveryDate ? formatDate(o.deliveryDate) : <Missing />}</div>
+                <div style={cell}>{vendor?.capacityUomPerMonth ? `${vendor.capacityUomPerMonth} UOM/month` : <Missing />}</div>
+                <div style={isEarliest ? cellBest : cell}>
+                  {o.deliveryDate ? `${formatDate(o.deliveryDate)}${o.capacityLeadDays ? ` (${o.capacityLeadDays} days)` : ""}` : <Missing />}
+                </div>
                 <div style={{ padding: "16px 14px" }}>
                   {selected === o.id ? (
                     <button onClick={() => accept(o.id)} style={{ background: "var(--charcoal)", color: "var(--white)", border: "1px solid var(--charcoal)", borderRadius: 9, padding: "10px 14px", font: "600 13px/1 var(--font-inter), sans-serif", cursor: "pointer" }}>

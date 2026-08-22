@@ -289,39 +289,19 @@ export async function patchRequirement(id: string, patch: Partial<Requirement> &
   return mapRequirement(updated);
 }
 
-const METRO_CITIES = ["Bangalore", "Mumbai", "Delhi", "Chennai", "Kolkata", "Ahmedabad", "Pune", "Hyderabad"];
-
-// Finds every vendor worth sending this RFx to, not just the narrowest exact match — city is a
-// preference to prioritize, not a hard filter, since zeroing out the shortlist entirely because
-// no vendor happens to sit in the exact delivery city would mean the buyer gets no quotes at all
-// even when other vendors clearly stock the material.
+// Every vendor who stocks the category gets the RFx, regardless of which city they're based in —
+// vendors regularly deliver outside their home city (that's what the transport/capacity fields on
+// their quote are for), and excluding one over a city mismatch just means fewer competing quotes
+// for the buyer. City is surfaced on the requirement for the buyer's own judgment, not used to
+// filter vendors out here.
 function shortlistVendors(req: Requirement, allVendors: Vendor[]): { shortlisted: string[]; funnel: string[] } {
   const funnel: string[] = [];
-  const byCategory = req.itemCategory
-    ? allVendors.filter((v) => v.suppliesCategories.includes(req.itemCategory as string))
-    : allVendors.slice();
-  funnel.push(`${byCategory.length} of ${allVendors.length} vendors stock ${req.itemCategory ?? "this item"}`);
-
-  const addressLower = (req.siteAddress ?? "").toLowerCase();
-  const city = METRO_CITIES.find((c) => addressLower.includes(c.toLowerCase())) ?? null;
-  const localMatches = city ? byCategory.filter((v) => v.serviceLocations.includes(city)) : [];
-
-  let pool: Vendor[];
-  if (city && localMatches.length > 0) {
-    pool = localMatches;
-    funnel.push(`${localMatches.length} deliver to ${city} — shortlisted`);
-  } else {
-    pool = byCategory;
-    funnel.push(
-      city
-        ? `0 deliver to ${city} — broadened to all ${byCategory.length} category matches`
-        : `no city detected — all ${byCategory.length} category matches shortlisted`
-    );
-  }
+  const pool = req.itemCategory ? allVendors.filter((v) => v.suppliesCategories.includes(req.itemCategory as string)) : allVendors.slice();
+  funnel.push(`${pool.length} of ${allVendors.length} vendors stock ${req.itemCategory ?? "this item"} — all shortlisted`);
   // Best-first ordering (more deals closed = more reliable) even though the comparison screen's
   // own ranking is what the buyer actually sees once quotes come in.
-  pool = [...pool].sort((a, b) => b.dealsLast30Days - a.dealsLast30Days);
-  return { shortlisted: pool.map((v) => v.id), funnel };
+  const sorted = [...pool].sort((a, b) => b.dealsLast30Days - a.dealsLast30Days);
+  return { shortlisted: sorted.map((v) => v.id), funnel };
 }
 
 function rfxMessageText(req: Requirement, buyerName: string, telegramLink?: string | null): string {
@@ -433,7 +413,13 @@ export async function listOffers(id: string) {
   if (!row) throw new Error("not_found");
   const vendorRows = await prisma.vendor.findMany();
   const dealsLookup = Object.fromEntries(vendorRows.map((v) => [v.id, v.dealsLast30Days]));
-  const offers = row.offers.map(mapOffer);
+  // A vendor can reply more than once (a correction, a retry, a second file) — every reply is
+  // kept as its own audit-trail row, but the comparison screen should only ever show each
+  // vendor's latest one, not a duplicate-looking row per historical reply. row.offers is ordered
+  // oldest-first, so the last write per vendorId wins.
+  const latestByVendor = new Map<string, ReturnType<typeof mapOffer>>();
+  for (const o of row.offers.map(mapOffer)) latestByVendor.set(o.vendorId, o);
+  const offers = [...latestByVendor.values()];
   const ranking = rankOffers(offers, dealsLookup);
   return { offers, ranking, vendors: vendorRows.map(mapVendor) };
 }

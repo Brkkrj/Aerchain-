@@ -22,13 +22,13 @@ async function main() {
   }
 
   const vendors = [
-    { id: "V1", name: "Barkha", suppliesCategories: ["Aggregate", "Cement", "Sand"], serviceLocations: ["Mumbai"], capacityUomPerMonth: 100, dealsLast30Days: 45, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+    { id: "V1", name: "Mahalaxmi Building Materials", suppliesCategories: ["Aggregate", "Cement", "Sand"], serviceLocations: ["Mumbai"], capacityUomPerMonth: 100, dealsLast30Days: 45, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V2", name: "Patel Traders", suppliesCategories: ["Aggregate", "TMT Bars"], serviceLocations: ["Delhi"], capacityUomPerMonth: 150, dealsLast30Days: 20, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V3", name: "Ganesh Enterprises", suppliesCategories: ["Aggregate", "Cement", "M-Sand"], serviceLocations: ["Bangalore"], capacityUomPerMonth: 500, dealsLast30Days: 50, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
-    { id: "V4", name: "Abhishek", suppliesCategories: ["Aggregate"], serviceLocations: ["Chennai"], capacityUomPerMonth: 80, dealsLast30Days: 15, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: ALT_PHONE },
+    { id: "V4", name: "Sri Ranga Aggregates", suppliesCategories: ["Aggregate"], serviceLocations: ["Chennai"], capacityUomPerMonth: 80, dealsLast30Days: 15, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: ALT_PHONE },
     { id: "V5", name: "Shah Steels", suppliesCategories: ["TMT Bars"], serviceLocations: ["Kolkata"], capacityUomPerMonth: 200, dealsLast30Days: 30, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V6", name: "Sree Cements", suppliesCategories: ["Cement"], serviceLocations: ["Ahmedabad"], capacityUomPerMonth: 300, dealsLast30Days: 18, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
-    { id: "V7", name: "Not a real match Co.", suppliesCategories: ["Bricks"], serviceLocations: ["Pune"], capacityUomPerMonth: 50, dealsLast30Days: 5, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
+    { id: "V7", name: "Deccan Bricks & Blocks", suppliesCategories: ["Bricks"], serviceLocations: ["Pune"], capacityUomPerMonth: 50, dealsLast30Days: 5, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V8", name: "Reliable RMC Suppliers", suppliesCategories: ["RMC", "Cement"], serviceLocations: ["Hyderabad"], capacityUomPerMonth: 250, dealsLast30Days: 22, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V9", name: "Metro Tiles & Sanitaryware", suppliesCategories: ["Tiles"], serviceLocations: ["Mumbai"], capacityUomPerMonth: 400, dealsLast30Days: 12, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },
     { id: "V10", name: "Shree Plywood House", suppliesCategories: ["Plywood", "Steel"], serviceLocations: ["Pune"], capacityUomPerMonth: 150, dealsLast30Days: 28, replyChannel: "telegram", email: DUMMY_EMAIL, telegramPhone: DUMMY_PHONE },

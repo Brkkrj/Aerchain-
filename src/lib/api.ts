@@ -15,7 +15,7 @@ export const api = {
     status?: string;
     category?: string;
     sort?: "asc" | "desc";
-    dateRange?: "7" | "30" | "90" | "all";
+    dateRange?: "1" | "3" | "30" | "90" | "all";
     page?: number;
     pageSize?: number;
   }) => {

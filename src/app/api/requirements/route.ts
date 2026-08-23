@@ -3,7 +3,7 @@ import { createRequirement, listRequirements } from "@/server/store";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const dateRange = searchParams.get("dateRange") as "7" | "30" | "90" | "all" | null;
+  const dateRange = searchParams.get("dateRange") as "1" | "3" | "30" | "90" | "all" | null;
   const { requirements, total } = await listRequirements({
     q: searchParams.get("q") ?? undefined,
     status: searchParams.get("status") ?? undefined,

@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { Card, Container, PageTitle, PrimaryButton, SecondaryButton, Shell, StatusPill, Subtitle } from "@/components/ui";
+import { BackLink, Card, Container, PageTitle, PrimaryButton, SecondaryButton, Shell, Subtitle } from "@/components/ui";
 import { api } from "@/lib/api";
 import { Offer, Requirement, Vendor } from "@/lib/types";
 import { formatDate } from "@/lib/aera";
@@ -54,13 +54,8 @@ export default function RequirementPage() {
   return (
     <Shell>
       <Header />
-      <div style={{ padding: "16px 24px 0", maxWidth: 1080, margin: "0 auto" }}>
-        <SecondaryButton
-          onClick={() => router.push("/")}
-          style={{ border: "none", padding: 0, height: "auto", background: "none" }}
-        >
-          ← Requirements
-        </SecondaryButton>
+      <div style={{ padding: "24px 24px 0", maxWidth: 1080, margin: "0 auto" }}>
+        <BackLink />
       </div>
       {req.status === "draft" && !req.summaryText && <ChatContinue req={req} onDone={load} />}
       {req.status === "draft" && req.summaryText && <ConfirmScreen req={req} onDone={load} router={router} />}
@@ -123,10 +118,15 @@ function ChatContinue({ req, onDone }: { req: Requirement; onDone: () => void })
   );
 }
 
+const LOADER_STAGES = [
+  { heading: "Finding the right vendors…", subtext: "Aera is matching your requirement with the best-fit suppliers." },
+  { heading: "Sending your RFQ…", subtext: "Almost there — getting vendors ready to quote." },
+];
+
 function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () => void; router: ReturnType<typeof useRouter> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(req.summaryText ?? "");
-  const [busy, setBusy] = useState(false);
+  const [loaderStage, setLoaderStage] = useState<0 | 1 | 2>(0);
 
   async function saveEdit() {
     await api.patchRequirement(req.id, { summaryText: draft });
@@ -135,9 +135,11 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
   }
 
   async function proceedAndSend() {
-    setBusy(true);
-    await api.confirm(req.id, "send");
-    setBusy(false);
+    setLoaderStage(1);
+    const apiDone = api.confirm(req.id, "send");
+    const stage2At = new Promise<void>((res) => setTimeout(res, 1200)).then(() => setLoaderStage(2));
+    await Promise.all([apiDone, stage2At]);
+    await new Promise((res) => setTimeout(res, 900));
     onDone();
   }
 
@@ -146,17 +148,39 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
     router.push("/");
   }
 
+  if (loaderStage > 0) {
+    const stage = LOADER_STAGES[loaderStage - 1];
+    return (
+      <Container style={{ maxWidth: 480, textAlign: "center", paddingTop: 96 }}>
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            margin: "0 auto 20px",
+            borderRadius: "50%",
+            border: "3px solid var(--border)",
+            borderTopColor: "var(--coral)",
+            animation: "spin 0.8s linear infinite",
+          }}
+        />
+        <style>{"@keyframes spin { to { transform: rotate(360deg); } }"}</style>
+        <PageTitle>{stage.heading}</PageTitle>
+        <Subtitle>{stage.subtext}</Subtitle>
+      </Container>
+    );
+  }
+
   return (
-    <Container style={{ maxWidth: 640, display: "flex", justifyContent: "center", flexDirection: "column" }}>
-      <PageTitle>Is this right?</PageTitle>
-      <Subtitle>Here&apos;s what Aera understood.</Subtitle>
-      <Card style={{ marginTop: 24, padding: "28px 28px 24px" }}>
+    <Container style={{ maxWidth: 800, display: "flex", justifyContent: "center", flexDirection: "column", paddingTop: 20 }}>
+      <PageTitle>Review your requirement</PageTitle>
+      <Subtitle>Check the details before we send this to vendors.</Subtitle>
+      <Card style={{ marginTop: 20, padding: 24 }}>
         {editing ? (
           <>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              style={{ width: "100%", minHeight: 110, resize: "vertical", border: "1px solid var(--charcoal)", borderRadius: 10, padding: "14px 16px", font: "400 18px/1.55 var(--font-inter), sans-serif", outline: "none" }}
+              style={{ width: "100%", minHeight: 100, resize: "vertical", border: "1px solid var(--charcoal)", borderRadius: 10, padding: "14px 16px", font: "400 17px/1.55 var(--font-inter), sans-serif", outline: "none" }}
             />
             <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
               <PrimaryButton onClick={saveEdit}>Save</PrimaryButton>
@@ -165,17 +189,15 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
           </>
         ) : (
           <>
-            <p style={{ margin: 0, font: "400 18px/1.55 var(--font-inter), sans-serif" }}>{req.summaryText}</p>
+            <p style={{ margin: 0, font: "400 17px/1.55 var(--font-inter), sans-serif" }}>{req.summaryText}</p>
             <div style={{ marginTop: 16 }}>
               <SecondaryButton onClick={() => setEditing(true)}>Edit</SecondaryButton>
             </div>
           </>
         )}
       </Card>
-      <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
-        <PrimaryButton onClick={proceedAndSend} disabled={busy}>
-          Proceed &amp; Send to Vendors
-        </PrimaryButton>
+      <div style={{ marginTop: 18, display: "flex", gap: 10 }}>
+        <PrimaryButton onClick={proceedAndSend}>Send to Vendors</PrimaryButton>
         <SecondaryButton onClick={saveDraft}>Save as Draft</SecondaryButton>
       </div>
     </Container>
@@ -183,19 +205,26 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
 }
 
 function SentScreen({ req }: { req: Requirement; onDone: () => void }) {
+  const router = useRouter();
   const total = req.shortlistedVendorIds.length;
   const replied = new Set(req.offers.map((o) => o.vendorId)).size;
-  const remaining = Math.max(0, total - replied);
   return (
-    <Container style={{ maxWidth: 640, textAlign: "center" }}>
-      <div style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "40px auto 20px" }}>
-        <span style={{ font: "400 20px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
+    <Container style={{ maxWidth: 480, textAlign: "center", paddingTop: 56 }}>
+      <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
+        <span style={{ font: "400 18px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
       </div>
-      <PageTitle>We&apos;ve sent the quote to vendors.</PageTitle>
-      <Subtitle>Once we get the rates, we&apos;ll notify you. Nothing else to do here.</Subtitle>
-      <div style={{ marginTop: 16, display: "inline-block", background: "var(--white)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 16px", font: "600 13px/1 var(--font-inter), sans-serif" }}>
-        {replied} of {total} vendor{total === 1 ? "" : "s"} replied
-        {remaining > 0 && <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}> · {remaining} remaining</span>}
+      <PageTitle>Your requirement is with the vendors.</PageTitle>
+      <Subtitle>We&apos;ll notify you as soon as quotes start coming in.</Subtitle>
+      <div style={{ marginTop: 14, display: "inline-block", background: "var(--white)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 16px" }}>
+        <div style={{ font: "600 14px/1 var(--font-inter), sans-serif" }}>
+          {replied} of {total} quote{total === 1 ? "" : "s"} received
+        </div>
+        <div style={{ font: "400 12px/1 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginTop: 4 }}>
+          Waiting for {total} vendor{total === 1 ? "" : "s"}
+        </div>
+      </div>
+      <div style={{ marginTop: 18 }}>
+        <SecondaryButton onClick={() => router.push("/")}>Back to Requirements</SecondaryButton>
       </div>
     </Container>
   );
@@ -215,15 +244,33 @@ function CompareScreen({
   onDone: () => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmedMsg, setConfirmedMsg] = useState(false);
   const bestId = ranking[0]?.offer.id;
   const bestRate = Math.min(...offers.filter((o) => o.rate != null).map((o) => o.rate as number));
   const earliest = offers
     .filter((o) => o.deliveryDate)
     .reduce((min, o) => (new Date(o.deliveryDate as string) < new Date(min) ? (o.deliveryDate as string) : min), offers[0]?.deliveryDate ?? "");
 
-  async function accept(offerId: string) {
+  async function confirmVendor(offerId: string) {
+    setConfirming(offerId);
     await api.acceptOffer(req.id, offerId);
+    setConfirming(null);
+    setConfirmedMsg(true);
+    await new Promise((res) => setTimeout(res, 1300));
     onDone();
+  }
+
+  if (confirmedMsg) {
+    return (
+      <Container style={{ maxWidth: 480, textAlign: "center", paddingTop: 96 }}>
+        <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+          <span style={{ font: "400 18px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
+        </div>
+        <PageTitle>Vendor confirmed</PageTitle>
+        <Subtitle>We&apos;ve notified the vendor to prepare for delivery.</Subtitle>
+      </Container>
+    );
   }
 
   return (
@@ -233,6 +280,7 @@ function CompareScreen({
           <PageTitle>Compare offers</PageTitle>
           <Subtitle>
             {req.code} · {req.itemName} — {offers.length} of {req.shortlistedVendorIds.length} vendors have replied.
+            {req.siteAddress && <> · Delivering to {req.siteAddress}</>}
           </Subtitle>
         </div>
       </div>
@@ -287,6 +335,11 @@ function CompareScreen({
               >
                 <div style={cell}>
                   <strong>{vendor?.name ?? o.vendorId}</strong>
+                  {selected === o.id && (
+                    <span style={{ font: "600 11px/1 var(--font-inter), sans-serif", color: "var(--coral)", background: "#FDEDE9", padding: "3px 6px", borderRadius: 6, width: "fit-content" }}>
+                      Vendor Selected
+                    </span>
+                  )}
                   {o.needsReview && (
                     <span style={{ font: "500 11px/1 var(--font-inter), sans-serif", color: "var(--warning)", background: "var(--warning-bg)", border: "1px solid var(--warning-border)", padding: "3px 6px", borderRadius: 6, width: "fit-content" }}>
                       Needs review
@@ -311,8 +364,12 @@ function CompareScreen({
                 </div>
                 <div style={{ padding: "16px 14px" }}>
                   {selected === o.id ? (
-                    <button onClick={() => accept(o.id)} style={{ background: "var(--charcoal)", color: "var(--white)", border: "1px solid var(--charcoal)", borderRadius: 9, padding: "10px 14px", font: "600 13px/1 var(--font-inter), sans-serif", cursor: "pointer" }}>
-                      Accept
+                    <button
+                      onClick={() => confirmVendor(o.id)}
+                      disabled={confirming === o.id}
+                      style={{ background: "var(--charcoal)", color: "var(--white)", border: "1px solid var(--charcoal)", borderRadius: 9, padding: "10px 14px", font: "600 13px/1 var(--font-inter), sans-serif", cursor: confirming === o.id ? "not-allowed" : "pointer", opacity: confirming === o.id ? 0.7 : 1 }}
+                    >
+                      {confirming === o.id ? "Confirming…" : "Confirm Vendor"}
                     </button>
                   ) : (
                     <button onClick={() => setSelected(o.id)} style={{ background: "var(--white)", color: "var(--charcoal)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 14px", font: "600 13px/1 var(--font-inter), sans-serif", cursor: "pointer" }}>
@@ -340,21 +397,24 @@ function Missing() {
 function ClosedScreen({ req, offers, vendors }: { req: Requirement; offers: Offer[]; vendors: Vendor[] }) {
   const winner = offers.find((o) => o.id === req.winningOfferId);
   const vendor = vendors.find((v) => v.id === winner?.vendorId);
+  const others = offers.filter((o) => o.id !== req.winningOfferId);
   const facts = [
-    { label: "Final rate", value: winner?.rate != null ? `₹${winner.rate} / UOM` : "—" },
-    { label: "Deal amount", value: req.dealAmount ? `₹${req.dealAmount.toLocaleString("en-IN")}` : "—" },
-    { label: "Delivery date", value: winner?.deliveryDate ? formatDate(winner.deliveryDate) : "—" },
-    { label: "Payment terms", value: winner?.paymentTerms ?? "—" },
+    { label: "Final Rate", value: winner?.rate != null ? `₹${winner.rate} / UOM` : "—" },
+    { label: "Total Deal Value", value: req.dealAmount ? `₹${req.dealAmount.toLocaleString("en-IN")}` : "—" },
+    { label: "Expected Delivery", value: winner?.deliveryDate ? formatDate(winner.deliveryDate) : "—" },
+    { label: "Payment Terms", value: winner?.paymentTerms ?? "—" },
+    { label: "Delivery Address", value: req.siteAddress ?? "—" },
   ];
   return (
     <Container style={{ maxWidth: 520, textAlign: "center" }}>
-      <div style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "60px auto 20px" }}>
+      <div style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "48px auto 20px" }}>
         <span style={{ font: "400 20px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
       </div>
-      <PageTitle>Deal closed with {vendor?.name ?? "vendor"}</PageTitle>
-      <Subtitle>
-        {vendor?.name} has been notified. {req.code} now shows as Closed Deal on your list.
-      </Subtitle>
+      <PageTitle>Vendor confirmed successfully</PageTitle>
+      <Subtitle>{vendor?.name ?? "The vendor"} has been notified and is preparing for delivery.</Subtitle>
+      <p style={{ margin: "6px 0 0", font: "400 14px/1.5 var(--font-inter), sans-serif", color: "var(--text-secondary)" }}>
+        Your requirement {req.code} is now marked as closed.
+      </p>
       <Card style={{ marginTop: 24, textAlign: "left", overflow: "hidden" }}>
         {facts.map((f, i) => (
           <div key={f.label} style={{ padding: "16px 20px", borderBottom: i < facts.length - 1 ? "1px solid #EFEFED" : "none", display: "flex", justifyContent: "space-between" }}>
@@ -363,6 +423,26 @@ function ClosedScreen({ req, offers, vendors }: { req: Requirement; offers: Offe
           </div>
         ))}
       </Card>
+
+      {others.length > 0 && (
+        <Card style={{ marginTop: 16, textAlign: "left", overflow: "hidden" }}>
+          {others.map((o, i) => {
+            const v = vendors.find((x) => x.id === o.vendorId);
+            return (
+              <div key={o.id} style={{ padding: "12px 20px", borderBottom: i < others.length - 1 ? "1px solid #EFEFED" : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 14 }}>{v?.name ?? o.vendorId}</span>
+                <span style={{ font: "600 11px/1 var(--font-inter), sans-serif", color: "var(--text-secondary)", background: "var(--bg)", border: "1px solid var(--border)", padding: "4px 8px", borderRadius: 6 }}>
+                  Not Selected
+                </span>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      <p style={{ marginTop: 20, font: "400 13px/1.5 var(--font-inter), sans-serif", color: "var(--text-secondary)" }}>
+        Everything is confirmed. We&apos;ll keep you updated on the delivery status.
+      </p>
     </Container>
   );
 }

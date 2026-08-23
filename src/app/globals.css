@@ -41,3 +41,29 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+.back-link:hover {
+  background: var(--bg);
+}
+
+.req-row {
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.req-row:hover {
+  background: #F4F4F2;
+}
+
+.req-row:hover .req-row-arrow {
+  color: var(--charcoal);
+}
+
+.notif-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.notif-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}

@@ -6,7 +6,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/db";
 import { extractOffer, detectFormat, rankOffers, extractTextFromDocument, ExtractionResult } from "@/lib/extraction";
-import { draftTurn, buildSummary } from "@/lib/aera";
+import { draftTurn, buildSummary, formatDate } from "@/lib/aera";
 import * as tg from "@/lib/telegram";
 import * as gmail from "@/lib/gmail";
 import * as gemini from "@/lib/gemini";
@@ -167,7 +167,7 @@ export async function listRequirements(params: {
   status?: string;
   category?: string;
   sortDesc?: boolean;
-  dateRange?: "7" | "30" | "90" | "all";
+  dateRange?: "1" | "3" | "30" | "90" | "all";
   page?: number;
   pageSize?: number;
 }): Promise<{ requirements: Requirement[]; total: number }> {
@@ -458,7 +458,6 @@ export async function submitVendorReply(
       needsReview: extraction.confidence < 0.7,
     },
   });
-  const wasFirst = req.offers.length === 0;
   const updatedRow = await prisma.requirement.update({ where: { id: requirementId }, data: { status: "rate_received" }, include: REQUIREMENT_INCLUDE });
   const updated = mapRequirement(updatedRow);
   await audit(requirementId, "system", "offer_received", `${vendor?.name ?? vendorId} via ${offerRow.replyChannel} (${format}), confidence ${offerRow.extractionConfidence}`);
@@ -466,14 +465,9 @@ export async function submitVendorReply(
   const { replied, total, remaining } = repliedCount(updated);
   const vendorName = vendor?.name ?? vendorId;
   const allIn = remaining === 0;
-  const text = allIn
-    ? `All ${total} vendor${total === 1 ? "" : "s"} have replied — compare rates now`
-    : wasFirst
-      ? `${vendorName}'s rate has arrived`
-      : `${vendorName}'s rate has arrived too`;
+  const text = allIn ? "All vendor quotes received. Comparison is ready." : `${vendorName} submitted a quote`;
   const meta =
-    `${req.code} · ${req.itemName ?? req.itemCategory} · ${replied} of ${total} vendor(s) replied` +
-    (remaining > 0 ? ` · ${remaining} remaining` : " · all in");
+    `${req.code} · ${replied} of ${total} responses received` + (remaining > 0 ? ` · ${remaining} remaining` : "");
   const type: Notification["type"] = allIn ? "all_replied" : "vendor_replied";
   await prisma.notification.create({ data: { requirementId, text, meta, type, read: false } });
   await audit(requirementId, "system", "customer_notified", text);
@@ -487,6 +481,9 @@ export async function selectOffer(id: string, offerId: string) {
   return mapRequirement(row);
 }
 
+// Awarding a vendor is the one action in this app that must fire an outbound notification with
+// no separate "send" step for the buyer to remember — everything else (RFx dispatch) already has
+// its own explicit confirm step, but here the accept click IS the send.
 export async function acceptOffer(id: string, offerId: string) {
   const offer = await prisma.offer.findUnique({ where: { id: offerId } });
   if (!offer) throw new Error("offer_not_found");
@@ -498,11 +495,37 @@ export async function acceptOffer(id: string, offerId: string) {
     data: { status: "closed_deal", winningOfferId: offerId, dealAmount },
     include: REQUIREMENT_INCLUDE,
   });
+  const updated = mapRequirement(updatedRow);
   const vendor = await prisma.vendor.update({ where: { id: offer.vendorId }, data: { dealsLast30Days: { increment: 1 } } });
+  const buyer = await prisma.buyer.findFirst();
+
+  const transportTerms =
+    offer.transportIncluded === true || (offer.transportIncluded === null && updated.transportIncluded === true)
+      ? "Included"
+      : offer.transportIncluded === false || (offer.transportIncluded === null && updated.transportIncluded === false)
+        ? "Excluded"
+        : "—";
+  const subject = "Order Confirmed – Get Ready to Deliver";
+  const body =
+    `Good news! ${buyer?.name ?? "The buyer"} has confirmed your quotation for this requirement. Please get the material ready ` +
+    `for delivery as per the agreed quantity, rate, delivery date and terms.\n\n` +
+    `Requirement / RFQ ID: ${updated.code}\n` +
+    `Item: ${updated.itemName ?? updated.itemCategory ?? "—"}\n` +
+    `Quantity: ${updated.qty && updated.uom ? `${updated.qty} ${updated.uom}` : "—"}\n` +
+    `Final Rate: ${offer.rate != null ? `₹${offer.rate}${offer.rateBasis ? ` / ${offer.rateBasis}` : ""}` : "—"}\n` +
+    `Delivery Address: ${updated.siteAddress ?? "—"}\n` +
+    `Delivery Date: ${offer.deliveryDate ? formatDate(offer.deliveryDate) : updated.deliveryDate ? formatDate(updated.deliveryDate) : "—"}\n` +
+    `Payment Terms: ${offer.paymentTerms ?? updated.paymentTerms ?? "—"}\n` +
+    `Transport Terms: ${transportTerms}\n`;
+
+  const replyTo = gmail.isConfigured() ? gmail.replyToAddress(offer.vendorId, id) : undefined;
+  const delivered = await sendEmail(vendor.email, subject, body, replyTo);
+  await logDispatch({ requirementId: id, vendorId: offer.vendorId, channel: "email", to: vendor.email, message: body, delivered });
+
   await audit(id, "buyer", "winner_selected", offer.vendorId);
-  await audit(id, "system", "confirmation_sent", `To ${vendor.name}`);
+  await audit(id, "system", delivered ? "confirmation_sent" : "confirmation_logged_not_sent", `To ${vendor.name} (${vendor.email})`);
   await audit(id, "system", "requirement_closed", `Deal amount ${dealAmount}`);
-  return mapRequirement(updatedRow);
+  return updated;
 }
 
 export async function cancelRequirement(id: string, reason: string) {

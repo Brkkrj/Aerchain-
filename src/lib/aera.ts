@@ -184,21 +184,23 @@ export function formatDate(iso: string | null): string {
   return `${Number(d)} ${months[Number(m) - 1]} ${y}`;
 }
 
-// Written the way a buyer would jot the requirement down themselves, not as a stacked readout
-// of every field with its own label — one flowing sentence, extras folded in after a dash.
+// Written as a single confirmatory question in the buyer's own voice — "You need X, delivered to
+// Y by Z. Is that correct?" — so the confirm screen can show it verbatim instead of a stacked
+// readout of every field with its own label.
 export function buildSummary(req: Requirement): string {
-  const head = `${req.itemName ?? req.itemCategory}${req.itemGrade ? ` (${req.itemGrade})` : ""}`;
-  const qty = req.qty && req.uom ? `, ${req.qty} ${req.uom}` : "";
-  const address = req.siteAddress ? ` to ${req.siteAddress}` : "";
+  const brand = req.itemGrade ?? req.brandPreference;
+  const item = [brand, req.itemName ?? req.itemCategory].filter(Boolean).join(" ");
+  const qty = req.qty && req.uom ? `${req.qty} ${req.uom} of ` : "";
+  const address = req.siteAddress ? ` delivered to ${req.siteAddress}` : "";
   const date = req.deliveryDate ? ` by ${formatDate(req.deliveryDate)}` : "";
 
   const extras: string[] = [];
   if (req.transportIncluded === true) extras.push("transport included");
   if (req.paymentTerms) extras.push(`${req.paymentTerms} payment`);
   if (req.siteCoordinator) extras.push(`site coordinator ${req.siteCoordinator}`);
-  const tail = extras.length ? ` — ${extras.join(", ")}.` : ".";
+  const tail = extras.length ? `, with ${extras.join(" and ")}` : "";
 
-  return `${head}${qty}, delivered${address}${date}${tail}`;
+  return `You need ${qty}${item}${address}${date}${tail}. Is that correct?`;
 }
 
 export interface DraftTurnResult {

@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode } from "react";
-import { RequirementStatus } from "@/lib/types";
-import { statusLabel, statusTag } from "@/lib/theme";
+import { Requirement } from "@/lib/types";
+import { displayStatusKey, statusLabel, statusTag } from "@/lib/theme";
 
 export function PrimaryButton({
   children,
@@ -82,8 +82,9 @@ export function Card({ children, style }: { children: ReactNode; style?: CSSProp
   );
 }
 
-export function StatusPill({ status }: { status: RequirementStatus }) {
-  const t = statusTag[status];
+export function StatusPill({ requirement }: { requirement: Requirement }) {
+  const key = displayStatusKey(requirement);
+  const t = statusTag[key];
   return (
     <span
       style={{
@@ -96,7 +97,7 @@ export function StatusPill({ status }: { status: RequirementStatus }) {
         display: "inline-block",
       }}
     >
-      {statusLabel[status]}
+      {statusLabel[key]}
     </span>
   );
 }
@@ -115,4 +116,28 @@ export function Shell({ children }: { children: ReactNode }) {
 
 export function Container({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <div style={{ maxWidth: 1080, margin: "0 auto", padding: "32px 24px 48px", ...style }}>{children}</div>;
+}
+
+export function BackLink({ href = "/", label = "Requirements" }: { href?: string; label?: string }) {
+  return (
+    <a
+      href={href}
+      className="back-link"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        padding: "6px 8px",
+        margin: "-6px 0 -6px -8px",
+        borderRadius: 8,
+        font: "600 16px/1 var(--font-inter), sans-serif",
+        color: "var(--charcoal)",
+      }}
+    >
+      <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ flex: "none" }}>
+        <path d="M10 3.5 5 8l5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {label}
+    </a>
+  );
 }

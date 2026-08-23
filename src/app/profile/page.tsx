@@ -1,13 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { Card, Container, PrimaryButton, SecondaryButton, Shell } from "@/components/ui";
+import { BackLink, Card, Container, PrimaryButton, SecondaryButton, Shell } from "@/components/ui";
 import { api } from "@/lib/api";
 import { Buyer } from "@/lib/types";
 
 export default function ProfilePage() {
-  const router = useRouter();
   const [profile, setProfile] = useState<Buyer | null>(null);
   const [editing, setEditing] = useState(false);
   const [billingDraft, setBillingDraft] = useState("");
@@ -37,10 +35,8 @@ export default function ProfilePage() {
   return (
     <Shell>
       <Header />
-      <Container style={{ maxWidth: 720, display: "flex", justifyContent: "center", flexDirection: "column" }}>
-        <SecondaryButton onClick={() => router.push("/")} style={{ alignSelf: "flex-start", border: "none", padding: 0, height: "auto", background: "none" }}>
-          ← Requirements
-        </SecondaryButton>
+      <Container style={{ maxWidth: 720, display: "flex", justifyContent: "center", flexDirection: "column", paddingTop: 24 }}>
+        <BackLink />
 
         <Card style={{ marginTop: 16, overflow: "hidden" }}>
           <div style={{ padding: 24, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", borderBottom: "1px solid #EFEFED" }}>
@@ -49,7 +45,6 @@ export default function ProfilePage() {
             </div>
             <div>
               <div style={{ font: "600 20px/1.25 var(--font-inter), sans-serif" }}>{profile.name}</div>
-              <div style={{ font: "400 13px/1.3 var(--font-inter), sans-serif", color: "var(--text-secondary)" }}>Buyer</div>
             </div>
             <div
               style={{

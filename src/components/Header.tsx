@@ -42,6 +42,7 @@ export default function Header() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
+  const [customerName, setCustomerName] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   async function poll() {
@@ -57,6 +58,13 @@ export default function Header() {
     poll();
     const t = setInterval(poll, 5000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    api
+      .getProfile()
+      .then(({ profile }) => setCustomerName(profile.name))
+      .catch(() => {});
   }, []);
 
   // There's no domain here for Gmail to push inbound vendor replies to, so we pull instead —
@@ -84,6 +92,16 @@ export default function Header() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
+  // Lock background scroll while the drawer is open, matching a standard slide-over panel.
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
   const unread = notifications.filter((n) => !n.read).length;
 
   async function openNotification(n: Notification) {
@@ -92,6 +110,23 @@ export default function Header() {
     router.push(`/requirements/${n.requirementId}`);
     poll();
   }
+
+  async function markAllRead() {
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+    for (const id of unreadIds) {
+      await api.markNotificationRead(id);
+    }
+    poll();
+  }
+
+  const initials = customerName
+    ? customerName
+        .split(" ")
+        .map((p) => p[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "RM";
 
   return (
     <div
@@ -151,7 +186,10 @@ export default function Header() {
                 position: "absolute",
                 top: 42,
                 right: 0,
-                width: 320,
+                width: 340,
+                maxHeight: "min(70vh, 460px)",
+                display: "flex",
+                flexDirection: "column",
                 background: "var(--white)",
                 border: "1px solid var(--border)",
                 borderRadius: 12,
@@ -160,44 +198,100 @@ export default function Header() {
                 overflow: "hidden",
               }}
             >
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600, fontSize: 14 }}>
-                Notifications
-              </div>
-              {notifications.length === 0 && (
-                <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>No notifications yet.</div>
-              )}
-              {notifications.map((n, i) => (
-                <div
-                  key={n.id}
-                  onClick={() => openNotification(n)}
-                  style={{
-                    padding: "14px 16px",
-                    cursor: "pointer",
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "flex-start",
-                    borderBottom: i < notifications.length - 1 ? "1px solid #EFEFED" : "none",
-                    background: !n.read ? "#FBFBFA" : "var(--white)",
-                  }}
-                >
-                  <NotificationIcon type={n.type} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                      <div style={{ fontSize: 14, color: "var(--charcoal)" }}>{n.text}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-secondary)", flex: "none" }}>{formatNotificationTime(n.createdAt)}</div>
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{n.meta}</div>
-                  </div>
-                  {!n.read && (
+              <div
+                style={{
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 1,
+                  flex: "none",
+                  background: "var(--white)",
+                  borderBottom: "1px solid var(--border)",
+                  padding: "12px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>Notifications</span>
+                  {unread > 0 && (
                     <span
-                      style={{ width: 7, height: 7, borderRadius: "50%", marginTop: 6, flex: "none", background: "var(--coral)" }}
-                    />
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: "var(--coral)",
+                        background: "var(--bg)",
+                        borderRadius: 10,
+                        padding: "2px 7px",
+                        flex: "none",
+                      }}
+                    >
+                      {unread}
+                    </span>
                   )}
                 </div>
-              ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flex: "none" }}>
+                  {unread > 0 && (
+                    <button
+                      onClick={markAllRead}
+                      style={{ background: "none", border: "none", padding: 0, font: "600 12px/1 var(--font-inter), sans-serif", color: "var(--coral)", cursor: "pointer" }}
+                    >
+                      Mark all as read
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                    style={{ background: "none", border: "none", padding: 0, color: "var(--text-secondary)", fontSize: 18, lineHeight: 1, cursor: "pointer" }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="notif-list" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {notifications.length === 0 && (
+                  <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>No notifications yet.</div>
+                )}
+                {notifications.map((n, i) => (
+                  <div
+                    key={n.id}
+                    onClick={() => openNotification(n)}
+                    style={{
+                      padding: "14px 16px",
+                      cursor: "pointer",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "flex-start",
+                      borderBottom: i < notifications.length - 1 ? "1px solid #EFEFED" : "none",
+                      background: !n.read ? "#FBFBFA" : "var(--white)",
+                    }}
+                  >
+                    <NotificationIcon type={n.type} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ fontSize: 14, color: "var(--charcoal)", wordBreak: "break-word" }}>{n.text}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)", flex: "none" }}>{formatNotificationTime(n.createdAt)}</div>
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2, wordBreak: "break-word" }}>{n.meta}</div>
+                      {n.type === "all_replied" && (
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--coral)", marginTop: 6 }}>View Comparison →</div>
+                      )}
+                    </div>
+                    {!n.read && (
+                      <span
+                        style={{ width: 7, height: 7, borderRadius: "50%", marginTop: 6, flex: "none", background: "var(--coral)" }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
+        {customerName && (
+          <span style={{ font: "600 13px/1 var(--font-inter), sans-serif", color: "var(--charcoal)" }}>{customerName}</span>
+        )}
         <a
           href="/profile"
           style={{
@@ -213,7 +307,7 @@ export default function Header() {
             fontWeight: 600,
           }}
         >
-          RM
+          {initials}
         </a>
       </div>
     </div>

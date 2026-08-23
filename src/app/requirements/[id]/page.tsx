@@ -210,52 +210,80 @@ function SentScreen({ req, vendors }: { req: Requirement; vendors: Vendor[]; onD
   const repliedIds = new Set(req.offers.map((o) => o.vendorId));
   const replied = repliedIds.size;
   return (
-    <Container style={{ maxWidth: 480, textAlign: "center", paddingTop: 56 }}>
-      <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-        <span style={{ font: "400 18px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
-      </div>
-      <PageTitle>Your requirement is with the vendors.</PageTitle>
-      <Subtitle>We&apos;ll notify you as soon as quotes start coming in.</Subtitle>
-      <div style={{ marginTop: 14, display: "inline-block", background: "var(--white)", border: "1px solid var(--border)", borderRadius: 9, padding: "10px 16px" }}>
-        <div style={{ font: "600 14px/1 var(--font-inter), sans-serif" }}>
-          {replied} of {total} quote{total === 1 ? "" : "s"} received
+    <Container style={{ maxWidth: 680, padding: "8px 24px 32px" }}>
+      <div
+        style={{
+          minHeight: "calc(100vh - 170px)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, flex: "none" }}>
+          <span style={{ font: "400 16px/1 var(--font-inter), sans-serif", color: "var(--success)" }}>✓</span>
         </div>
-        <div style={{ font: "400 12px/1 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginTop: 4 }}>
-          Waiting for {total} vendor{total === 1 ? "" : "s"}
-        </div>
-      </div>
+        <PageTitle>Your requirement is with the vendors</PageTitle>
+        <Subtitle>We&apos;ll notify you as soon as quotes start coming in.</Subtitle>
 
-      {total > 0 && (
-        <div style={{ marginTop: 18, textAlign: "left" }}>
-          <div style={{ font: "600 12px/1 var(--font-inter), sans-serif", letterSpacing: "0.04em", color: "var(--text-secondary)", marginBottom: 8 }}>
-            SENT TO {total} VENDOR{total === 1 ? "" : "S"}
+        <div
+          style={{
+            marginTop: 20,
+            background: "var(--white)",
+            border: "1px solid var(--border)",
+            borderRadius: 9,
+            padding: "10px 20px",
+            textAlign: "center",
+            minWidth: 220,
+          }}
+        >
+          <div style={{ font: "600 14px/1 var(--font-inter), sans-serif" }}>
+            {replied} of {total} quote{total === 1 ? "" : "s"} received
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {req.shortlistedVendorIds.map((vid) => {
-              const hasReplied = repliedIds.has(vid);
-              return (
-                <span
-                  key={vid}
-                  style={{
-                    font: "500 12px/1 var(--font-inter), sans-serif",
-                    color: hasReplied ? "var(--success)" : "var(--charcoal)",
-                    background: hasReplied ? "var(--success-bg)" : "var(--white)",
-                    border: `1px solid ${hasReplied ? "var(--success-border)" : "var(--border)"}`,
-                    padding: "5px 10px",
-                    borderRadius: 8,
-                  }}
-                >
-                  {vendors.find((v) => v.id === vid)?.name ?? vid}
-                  {hasReplied ? " ✓" : ""}
-                </span>
-              );
-            })}
+          <div style={{ font: "400 12px/1 var(--font-inter), sans-serif", color: "var(--text-secondary)", marginTop: 3 }}>
+            Waiting for {total} vendor{total === 1 ? "" : "s"}
           </div>
         </div>
-      )}
 
-      <div style={{ marginTop: 18 }}>
-        <SecondaryButton onClick={() => router.push("/")}>Back to Requirements</SecondaryButton>
+        {total > 0 && (
+          <div style={{ marginTop: 24, width: "100%", textAlign: "center" }}>
+            <div style={{ font: "600 13px/1 var(--font-inter), sans-serif", color: "var(--charcoal)", marginBottom: 10 }}>
+              Sent to {total} vendor{total === 1 ? "" : "s"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8 }}>
+              {req.shortlistedVendorIds.map((vid) => {
+                const hasReplied = repliedIds.has(vid);
+                return (
+                  <span
+                    key={vid}
+                    style={{
+                      font: "500 12px/1 var(--font-inter), sans-serif",
+                      color: hasReplied ? "var(--success)" : "var(--charcoal)",
+                      background: hasReplied ? "var(--success-bg)" : "var(--white)",
+                      border: `1px solid ${hasReplied ? "var(--success-border)" : "var(--border)"}`,
+                      padding: "7px 12px",
+                      borderRadius: 8,
+                      lineHeight: 1,
+                      wordBreak: "break-word",
+                      maxWidth: "100%",
+                    }}
+                  >
+                    {vendors.find((v) => v.id === vid)?.name ?? vid}
+                    {hasReplied ? " ✓" : ""}
+                  </span>
+                );
+              })}
+            </div>
+            <p style={{ margin: "12px 0 0", font: "400 12px/1.4 var(--font-inter), sans-serif", color: "var(--text-secondary)" }}>
+              This page updates as vendor quotes arrive.
+            </p>
+          </div>
+        )}
+
+        <div style={{ marginTop: 22 }}>
+          <SecondaryButton onClick={() => router.push("/")}>Back to Requirements</SecondaryButton>
+        </div>
       </div>
     </Container>
   );

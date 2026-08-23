@@ -47,11 +47,25 @@ function findItemName(text: string, categoryThisMessage: string | null, knownCat
   return categoryThisMessage;
 }
 
+function titleCase(s: string): string {
+  return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
 function findBrand(text: string): string | null {
   const lower = text.toLowerCase();
   for (const b of BRAND_WORDS) {
     if (lower.includes(b)) return b.charAt(0).toUpperCase() + b.slice(1);
   }
+  // BRAND_WORDS only covers well-known cement/steel brands — anything else the buyer names
+  // (a regional aggregate/TMT supplier, e.g. "Robo Silicon grade") would otherwise be missed
+  // entirely, and Aera would wrongly ask for the grade again even though it was given. Fall back
+  // to whatever the message explicitly calls out as the grade/brand.
+  const gradeMatch = text.match(/\b([A-Za-z][A-Za-z0-9&.\- ]{1,30}?)\s+grade\b/i);
+  if (gradeMatch) return titleCase(gradeMatch[1].trim());
+  const brandMatch = text.match(
+    /\bbrand(?:\s*(?:is|preference is|preference|:))?\s+([A-Za-z][A-Za-z0-9&.\- ]{1,30}?)(?=[,.]|\s+(?:at|to|by|delivered|deliver)\b|$)/i
+  );
+  if (brandMatch) return titleCase(brandMatch[1].trim());
   return null;
 }
 

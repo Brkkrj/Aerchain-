@@ -175,7 +175,12 @@ export async function listRequirements(params: {
   const where: Record<string, unknown> = {};
   if (params.status && params.status !== "all") where.status = params.status;
   if (params.category && params.category !== "all") where.itemCategory = params.category;
-  if (params.dateRange && params.dateRange !== "all") {
+  if (params.dateRange === "1") {
+    // "Today" means the calendar day, not "the last 24 hours" — a requirement from yesterday
+    // evening is within 24h of most query times but should not show up under "Today".
+    const now = new Date();
+    where.createdAt = { gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) };
+  } else if (params.dateRange && params.dateRange !== "all") {
     const days = Number(params.dateRange);
     where.createdAt = { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
   }

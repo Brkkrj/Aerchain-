@@ -59,7 +59,7 @@ export default function RequirementPage() {
       </div>
       {req.status === "draft" && !req.summaryText && <ChatContinue req={req} onDone={load} />}
       {req.status === "draft" && req.summaryText && <ConfirmScreen req={req} onDone={load} router={router} />}
-      {req.status === "sent_to_vendor" && <SentScreen req={req} onDone={load} />}
+      {req.status === "sent_to_vendor" && <SentScreen req={req} vendors={vendors} onDone={load} />}
       {req.status === "rate_received" && (
         <CompareScreen req={req} offers={offers} ranking={ranking} vendors={vendors} onDone={load} />
       )}
@@ -204,10 +204,11 @@ function ConfirmScreen({ req, onDone, router }: { req: Requirement; onDone: () =
   );
 }
 
-function SentScreen({ req }: { req: Requirement; onDone: () => void }) {
+function SentScreen({ req, vendors }: { req: Requirement; vendors: Vendor[]; onDone: () => void }) {
   const router = useRouter();
   const total = req.shortlistedVendorIds.length;
-  const replied = new Set(req.offers.map((o) => o.vendorId)).size;
+  const repliedIds = new Set(req.offers.map((o) => o.vendorId));
+  const replied = repliedIds.size;
   return (
     <Container style={{ maxWidth: 480, textAlign: "center", paddingTop: 56 }}>
       <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
@@ -223,6 +224,36 @@ function SentScreen({ req }: { req: Requirement; onDone: () => void }) {
           Waiting for {total} vendor{total === 1 ? "" : "s"}
         </div>
       </div>
+
+      {total > 0 && (
+        <div style={{ marginTop: 18, textAlign: "left" }}>
+          <div style={{ font: "600 12px/1 var(--font-inter), sans-serif", letterSpacing: "0.04em", color: "var(--text-secondary)", marginBottom: 8 }}>
+            SENT TO {total} VENDOR{total === 1 ? "" : "S"}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {req.shortlistedVendorIds.map((vid) => {
+              const hasReplied = repliedIds.has(vid);
+              return (
+                <span
+                  key={vid}
+                  style={{
+                    font: "500 12px/1 var(--font-inter), sans-serif",
+                    color: hasReplied ? "var(--success)" : "var(--charcoal)",
+                    background: hasReplied ? "var(--success-bg)" : "var(--white)",
+                    border: `1px solid ${hasReplied ? "var(--success-border)" : "var(--border)"}`,
+                    padding: "5px 10px",
+                    borderRadius: 8,
+                  }}
+                >
+                  {vendors.find((v) => v.id === vid)?.name ?? vid}
+                  {hasReplied ? " ✓" : ""}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: 18 }}>
         <SecondaryButton onClick={() => router.push("/")}>Back to Requirements</SecondaryButton>
       </div>
